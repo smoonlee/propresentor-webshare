@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ProPresenter WebShare</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Toolbar ── */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      -webkit-app-region: drag;
+      flex-shrink: 0;
+    }
+    #toolbar > * { -webkit-app-region: no-drag; }
+
+    #url-input {
+      flex: 1;
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #0f3460;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-size: 13px;
+      outline: none;
+    }
+    #url-input:focus { border-color: #e94560; }
+
+    .btn {
+      padding: 6px 14px;
+      border: none;
+      border-radius: 6px;
+      background: #0f3460;
+      color: #e0e0e0;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #e94560; }
+    .btn.active { background: #e94560; }
+
+    /* ── Webview ── */
+    #webview-container {
+      flex: 1;
+      position: relative;
+      background: #000;
+    }
+    webview {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Status bar ── */
+    #status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 12px;
+      background: #16213e;
+      border-top: 1px solid #0f3460;
+      font-size: 11px;
+      color: #888;
+      flex-shrink: 0;
+    }
+    #status-bar .spacer { flex: 1; }
+
+    /* ── Settings flyout ── */
+    #settings-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+    }
+    #settings-overlay.open { display: flex; }
+    #settings-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+    }
+    #settings-panel {
+      position: absolute;
+      top: 0; right: 0; bottom: 0;
+      width: 380px;
+      max-width: 90vw;
+      background: #1a1a2e;
+      border-left: 1px solid #0f3460;
+      overflow-y: auto;
+      padding: 20px 24px;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+    }
+    #settings-overlay.open #settings-panel {
+      transform: translateX(0);
+    }
+    #settings-panel h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #settings-panel h2 .close-btn {
+      background: none;
+      border: none;
+      color: #888;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    #settings-panel h2 .close-btn:hover { color: #fff; background: #0f3460; }
+    .s-section {
+      margin-bottom: 20px;
+    }
+    .s-section h3 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #e94560;
+      margin-bottom: 10px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #0f3460;
+    }
+    .s-field {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .s-field > label:first-child {
+      width: 120px;
+      flex-shrink: 0;
+      font-size: 12px;
+      color: #ccc;
+    }
+    .s-field input[type="text"],
+    .s-field input[type="number"] {
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid #0f3460;
+      border-radius: 5px;
+      background: #16213e;
+      color: #e0e0e0;
+      font-size: 12px;
+      outline: none;
+    }
+    .s-field input:focus { border-color: #e94560; }
+    .s-field .s-hint {
+      font-size: 10px;
+      color: #555;
+    }
+    /* Toggle – pill switch with ON/OFF labels */
+    .s-toggle {
+      position: relative;
+      width: 36px; height: 22px;
+      flex-shrink: 0;
+      display: inline-block;
+    }
+    .s-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .s-toggle .slider {
+      position: absolute; inset: 0;
+      background: #1a2744;
+      border: 2px solid #2a3a5c;
+      border-radius: 11px;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+    }
+    .s-toggle .slider::before {
+      content: '';
+      position: absolute;
+      width: 14px; height: 14px;
+      left: 2px; top: 2px;
+      background: #556480;
+      border-radius: 50%;
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+      z-index: 1;
+    }
+    .s-toggle .slider:hover {
+      border-color: #4a5a7a;
+    }
+    .s-toggle .slider:hover::before {
+      background: #6a7a9a;
+    }
+    .s-toggle input:checked + .slider {
+      background: #e94560;
+      border-color: #e94560;
+    }
+
+    .s-toggle input:checked + .slider:hover {
+      background: #d63a54;
+      border-color: #d63a54;
+    }
+    .s-toggle input:checked + .slider::before {
+      transform: translateX(14px);
+      background: #fff;
+    }
+    .s-toggle input:focus-visible + .slider {
+      box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.35);
+    }
+    .s-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 20px;
+      padding-top: 14px;
+      border-top: 1px solid #0f3460;
+    }
+    .s-btn {
+      padding: 7px 18px;
+      border: none;
+      border-radius: 5px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .s-btn-primary { background: #e94560; color: #fff; }
+    .s-btn-primary:hover { background: #c73a52; }
+    .s-btn-ghost { background: transparent; color: #888; border: 1px solid #333; }
+    .s-btn-ghost:hover { background: #16213e; color: #ccc; }
+    .s-restart {
+      display: none;
+      margin-top: 12px;
+      padding: 8px 10px;
+      background: #2a1a00;
+      border: 1px solid #e9a560;
+      border-radius: 5px;
+      color: #e9a560;
+      font-size: 11px;
+      line-height: 1.3;
+      text-align: center;
+      animation: restartPulse 1s ease-in-out;
+    }
+    .s-restart.visible { display: block; }
+    @keyframes restartPulse {
+      0%, 100% { background: #2a1a00; }
+      50% { background: #3d2800; }
+    }
+
+    /* ── Diagnostics overlay ── */
+    #diag-overlay {
+      display: none;
+      position: fixed;
+      top: 60px; left: 10px;
+      z-index: 999;
+      background: rgba(0,0,0,0.82);
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 0;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 11px;
+      color: #ccc;
+      min-width: 200px;
+      user-select: none;
+    }
+    #diag-overlay.visible { display: block; }
+    #diag-drag-handle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px 4px;
+      cursor: grab;
+      border-bottom: 1px solid #0f3460;
+    }
+    #diag-drag-handle:active { cursor: grabbing; }
+    #diag-drag-handle .diag-title {
+      font-weight: 600;
+      color: #e94560;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    #diag-drag-handle .diag-grip {
+      color: #444;
+      font-size: 12px;
+      letter-spacing: 2px;
+    }
+    #diag-body {
+      padding: 8px 12px 10px;
+    }
+    #diag-overlay .diag-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 3px;
+    }
+    #diag-overlay .diag-label { color: #888; }
+    #diag-overlay .diag-val { color: #4caf50; font-weight: 600; }
+    #diag-overlay .diag-val.warn { color: #e9a560; }
+    #diag-overlay .diag-val.bad { color: #e94560; }
+  </style>
+</head>
+<body>
+
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <button class="btn" id="btn-back" title="Back">&#9664;</button>
+    <button class="btn" id="btn-forward" title="Forward">&#9654;</button>
+    <button class="btn" id="btn-reload" title="Reload">&#8635;</button>
+    <input  id="url-input" type="text"
+            placeholder="Paste a URL to share via WebShare…" spellcheck="false" />
+    <button class="btn" id="btn-go">Go</button>
+    <button class="btn" id="btn-pin">Pin</button>
+    <button class="btn" id="btn-settings" title="Settings">&#9881;</button>
+  </div>
+
+  <!-- WebView (interactive for the operator) -->
+  <div id="webview-container">
+    <webview id="webview" src="about:blank" allowpopups></webview>
+  </div>
+
+  <!-- Status bar -->
+  <div id="status-bar">
+    <span id="viewer-count">0 viewers</span>
+    <span class="spacer"></span>
+    <a href="#" id="server-url" style="color:#6ca0dc;text-decoration:underline;cursor:pointer;">loading…</a>
+  </div>
+
+  <!-- Diagnostics overlay -->
+  <div id="diag-overlay">
+    <div id="diag-drag-handle">
+      <span class="diag-title">Diagnostics</span>
+      <span class="diag-grip">⠇</span>
+    </div>
+    <div id="diag-body">
+      <div class="diag-row"><span class="diag-label">Capture FPS</span><span class="diag-val" id="diag-fps">0</span></div>
+      <div class="diag-row"><span class="diag-label">Frame size</span><span class="diag-val" id="diag-frame-size">0 KB</span></div>
+      <div class="diag-row"><span class="diag-label">Bandwidth</span><span class="diag-val" id="diag-bandwidth">0 KB/s</span></div>
+      <div class="diag-row"><span class="diag-label">Skipped</span><span class="diag-val" id="diag-skipped" style="color:#6ca0dc">0/s</span></div>
+      <div class="diag-row"><span class="diag-label">Viewers</span><span class="diag-val" id="diag-viewers">0</span></div>
+      <div class="diag-row"><span class="diag-label">Memory (app)</span><span class="diag-val" id="diag-memory">0 MB</span></div>
+      <div class="diag-row"><span class="diag-label">Uptime</span><span class="diag-val" id="diag-uptime">0s</span></div>
+      <div class="diag-row"><span class="diag-label">LAN IP</span><span class="diag-val" id="diag-lan-ip" style="color:#6ca0dc">—</span></div>
+    </div>
+  </div>
+
+  <!-- Settings flyout -->
+  <div id="settings-overlay">
+    <div id="settings-backdrop"></div>
+    <div id="settings-panel">
+      <h2>&#9881; Settings <button class="close-btn" id="settings-close">&times;</button></h2>
+
+      <div class="s-section">
+        <h3>Server</h3>
+        <div class="s-field">
+          <label for="s-port">Port</label>
+          <input type="number" id="s-port" min="1024" max="65535" />
+          <span class="s-hint">Restart required</span>
+        </div>
+        <div class="s-field">
+          <label for="s-bind">Bind address</label>
+          <input type="text" id="s-bind" placeholder="0.0.0.0" />
+        </div>
+      </div>
+
+      <div class="s-section">
+        <h3>Capture</h3>
+        <div class="s-field">
+          <label for="s-fps">FPS</label>
+          <input type="number" id="s-fps" min="1" max="60" />
+          <span class="s-hint">1–60</span>
+        </div>
+        <div class="s-field">
+          <label for="s-quality">JPEG quality</label>
+          <input type="number" id="s-quality" min="10" max="100" />
+          <span class="s-hint">10–100</span>
+        </div>
+      </div>
+
+      <div class="s-section">
+        <h3>Startup</h3>
+        <div class="s-field">
+          <label for="s-startup-url">Auto-load URL</label>
+          <input type="text" id="s-startup-url" placeholder="https://example.com" />
+        </div>
+        <div class="s-field">
+          <label>Always on top</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-aot" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="s-section">
+        <h3>Interface</h3>
+        <div class="s-field">
+          <label>Show diagnostics</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-diag" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="s-actions">
+        <button class="s-btn s-btn-primary" id="s-save">Save</button>
+        <span style="flex:1"></span>
+        <button class="s-btn s-btn-ghost" id="s-defaults">Reset Defaults</button>
+      </div>
+      <div class="s-restart" id="s-restart">Restart required to apply port/bind changes.</div>
+    </div>
+  </div>
+
+  <script>
+    const api = window.electronAPI;
+
+    const webview    = document.getElementById('webview');
+
+    // Set webview preload with absolute path (Electron requires file:// protocol)
+    const preloadReady = api.getWebviewPreload().then((p) => {
+      webview.setAttribute('preload', 'file://' + p.replace(/\\/g, '/'));
+    });
+    const urlInput   = document.getElementById('url-input');
+    const btnGo      = document.getElementById('btn-go');
+    const btnReload  = document.getElementById('btn-reload');
+    const btnBack    = document.getElementById('btn-back');
+    const btnForward = document.getElementById('btn-forward');
+    const btnPin     = document.getElementById('btn-pin');
+    const viewerCountEl = document.getElementById('viewer-count');
+    const serverUrlEl   = document.getElementById('server-url');
+
+    /* ── Navigate ── */
+    function navigate(url) {
+      if (!url || !url.trim()) return;
+      if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+      urlInput.value = url;
+      webview.src = url;
+    }
+
+    btnGo.addEventListener('click', () => navigate(urlInput.value));
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') navigate(urlInput.value);
+    });
+
+    btnReload.addEventListener('click', () => webview.reload());
+    btnBack.addEventListener('click', () => webview.goBack());
+    btnForward.addEventListener('click', () => webview.goForward());
+
+    /* ── Settings flyout ── */
+    const settingsOverlay = document.getElementById('settings-overlay');
+    const settingsPanel   = document.getElementById('settings-panel');
+    let settingsOrigPort = null;
+    let settingsOrigBind = null;
+    let settingsOrigFps = null;
+    let settingsOrigQuality = null;
+
+    const sFields = {
+      port:        document.getElementById('s-port'),
+      bind:        document.getElementById('s-bind'),
+      fps:         document.getElementById('s-fps'),
+      quality:     document.getElementById('s-quality'),
+      startupUrl:  document.getElementById('s-startup-url'),
+      aot:         document.getElementById('s-aot'),
+      diag:        document.getElementById('s-diag'),
+    };
+
+    function populateSettings(s) {
+      sFields.port.value       = s.port;
+      sFields.bind.value       = s.bindAddress;
+      sFields.fps.value        = s.captureFps;
+      sFields.quality.value    = s.jpegQuality;
+      sFields.startupUrl.value = s.startupUrl || '';
+      sFields.aot.checked      = s.alwaysOnTop;
+      sFields.diag.checked     = s.showDiagnostics;
+    }
+
+    function collectSettings() {
+      return {
+        port:         Math.max(1024, Math.min(65535, parseInt(sFields.port.value, 10) || 4983)),
+        bindAddress:  sFields.bind.value.trim() || '0.0.0.0',
+        captureFps:   Math.max(1, Math.min(60, parseInt(sFields.fps.value, 10) || 12)),
+        jpegQuality:  Math.max(10, Math.min(100, parseInt(sFields.quality.value, 10) || 70)),
+        startupUrl:   sFields.startupUrl.value.trim(),
+        alwaysOnTop:  sFields.aot.checked,
+        showDiagnostics: sFields.diag.checked,
+      };
+    }
+
+    function openSettings() {
+      api.getSettings().then((s) => {
+        settingsOrigPort = s.port;
+        settingsOrigBind = s.bindAddress;
+        settingsOrigFps = s.captureFps;
+        settingsOrigQuality = s.jpegQuality;
+        populateSettings(s);
+        document.getElementById('s-restart').classList.remove('visible');
+        settingsOverlay.classList.add('open');
+      });
+    }
+
+    function closeSettings() {
+      settingsOverlay.classList.remove('open');
+    }
+
+    document.getElementById('btn-settings').addEventListener('click', openSettings);
+    document.getElementById('settings-close').addEventListener('click', closeSettings);
+    document.getElementById('settings-backdrop').addEventListener('click', closeSettings);
+
+    // Menu / keyboard shortcut triggers this via main process
+    api.onToggleSettings(() => {
+      if (settingsOverlay.classList.contains('open')) closeSettings();
+      else openSettings();
+    });
+
+    // Save
+    document.getElementById('s-save').addEventListener('click', async () => {
+      const s = collectSettings();
+      await api.saveSettings(s);
+      const needsRestart = s.port !== settingsOrigPort || s.bindAddress !== settingsOrigBind;
+      if (needsRestart) {
+        const el = document.getElementById('s-restart');
+        el.classList.add('visible');
+        // Re-trigger pulse animation
+        el.style.animation = 'none';
+        el.offsetHeight; // force reflow
+        el.style.animation = '';
+      }
+      api.applySettings(s);
+      // Reload webview when capture settings change so the new quality/fps is visible
+      const captureChanged = s.captureFps !== settingsOrigFps || s.jpegQuality !== settingsOrigQuality;
+      if (captureChanged && webview.src && webview.src !== 'about:blank') {
+        webview.reload();
+      }
+      if (!needsRestart) {
+        setTimeout(closeSettings, 250);
+      }
+    });
+
+    // Reset defaults
+    document.getElementById('s-defaults').addEventListener('click', async () => {
+      const defaults = await api.getDefaults();
+      populateSettings(defaults);
+    });
+
+    // ESC to close
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && settingsOverlay.classList.contains('open')) closeSettings();
+    });
+
+    // React to live settings changes
+    api.onSettingsChanged((s) => {
+      toggleDiagnostics(s.showDiagnostics);
+    });
+
+    // Apply initial settings
+    api.getSettings().then((s) => {
+      toggleDiagnostics(s.showDiagnostics);
+    });
+
+    /* ── Always on top ── */
+    btnPin.addEventListener('click', () => api.toggleAlwaysOnTop());
+    api.onAlwaysOnTopChanged((pinned) => {
+      btnPin.classList.toggle('active', pinned);
+      btnPin.textContent = pinned ? 'Pinned' : 'Pin';
+    });
+    api.getAlwaysOnTop().then((pinned) => {
+      btnPin.classList.toggle('active', pinned);
+      btnPin.textContent = pinned ? 'Pinned' : 'Pin';
+    });
+
+    /* ── Webview events ── */
+    webview.addEventListener('dom-ready', () => {
+      // Start live capture once content is rendered
+      const wcId = webview.getWebContentsId();
+      if (wcId) api.startCapture(wcId);
+    });
+
+    webview.addEventListener('did-finish-load', () => {
+      const url = webview.getURL();
+      if (url === 'about:blank') return;
+      urlInput.value = url;
+    });
+
+    webview.addEventListener('did-fail-load', (e) => {
+      if (e.errorCode === -3) return; // aborted — ignore
+    });
+
+    webview.addEventListener('did-navigate', (e) => {
+      urlInput.value = e.url;
+    });
+
+    webview.addEventListener('crashed', () => {
+      urlInput.value = '';
+      webview.src = 'about:blank';
+      alert('The page crashed. It has been reset to a blank page.');
+    });
+
+    /* ── Auto-load startup URL (wait for preload + webview ready) ── */
+    const wvReady = new Promise((resolve) => {
+      webview.addEventListener('dom-ready', resolve, { once: true });
+    });
+    Promise.all([preloadReady, wvReady, api.getSettings()]).then(([,, s]) => {
+      if (s.startupUrl) navigate(s.startupUrl);
+    });
+
+    /* ── Viewer count polling ── */
+    setInterval(async () => {
+      const count = await api.getViewerCount();
+      viewerCountEl.textContent = count + ' viewer' + (count !== 1 ? 's' : '');
+    }, 2000);
+
+    /* ── Show server URL (clickable) ── */
+    Promise.all([api.getPort(), api.getLanIp()]).then(([port, lanIp]) => {
+      const url = 'http://' + lanIp + ':' + port + '/webshare';
+      serverUrlEl.textContent = url;
+      serverUrlEl.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigator.clipboard.writeText(url).catch(() => {});
+        api.openExternal(url);
+      });
+      document.getElementById('diag-lan-ip').textContent = lanIp;
+    });
+
+    /* ── Diagnostics overlay ── */
+    const diagOverlay = document.getElementById('diag-overlay');
+    let diagInterval = null;
+    const appStartTime = Date.now();
+
+    // ── Drag support ──
+    (function initDiagDrag() {
+      const handle = document.getElementById('diag-drag-handle');
+      let dragging = false, offsetX = 0, offsetY = 0;
+
+      handle.addEventListener('mousedown', (e) => {
+        dragging = true;
+        const rect = diagOverlay.getBoundingClientRect();
+        offsetX = e.clientX - rect.left;
+        offsetY = e.clientY - rect.top;
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        let x = e.clientX - offsetX;
+        let y = e.clientY - offsetY;
+        // Keep within viewport
+        x = Math.max(0, Math.min(window.innerWidth - diagOverlay.offsetWidth, x));
+        y = Math.max(0, Math.min(window.innerHeight - diagOverlay.offsetHeight, y));
+        diagOverlay.style.left = x + 'px';
+        diagOverlay.style.top = y + 'px';
+      });
+
+      document.addEventListener('mouseup', () => { dragging = false; });
+    })();
+
+    function toggleDiagnostics(on) {
+      if (on) {
+        diagOverlay.classList.add('visible');
+        if (!diagInterval) {
+          diagInterval = setInterval(updateDiagnostics, 1000);
+          updateDiagnostics();
+        }
+      } else {
+        diagOverlay.classList.remove('visible');
+        if (diagInterval) { clearInterval(diagInterval); diagInterval = null; }
+      }
+    }
+
+    async function updateDiagnostics() {
+      const stats = await api.getDiagnostics();
+      const fpsEl = document.getElementById('diag-fps');
+      fpsEl.textContent = stats.fps;
+      fpsEl.className = 'diag-val' + (stats.fps < 5 ? ' bad' : stats.fps < 15 ? ' warn' : '');
+
+      const sizeKB = (stats.avgFrameSize / 1024).toFixed(1);
+      document.getElementById('diag-frame-size').textContent = sizeKB + ' KB';
+
+      const bw = stats.bandwidthBytesPerSec;
+      const bwEl = document.getElementById('diag-bandwidth');
+      if (bw > 1048576) {
+        bwEl.textContent = (bw / 1048576).toFixed(1) + ' MB/s';
+      } else {
+        bwEl.textContent = (bw / 1024).toFixed(0) + ' KB/s';
+      }
+      bwEl.className = 'diag-val' + (bw > 5242880 ? ' bad' : bw > 2097152 ? ' warn' : '');
+
+      document.getElementById('diag-skipped').textContent = (stats.skippedFrames || 0) + '/s';
+
+      document.getElementById('diag-viewers').textContent = stats.viewers;
+
+      const memMB = (stats.memoryMB).toFixed(0);
+      const memEl = document.getElementById('diag-memory');
+      memEl.textContent = memMB + ' MB';
+      memEl.className = 'diag-val' + (stats.memoryMB > 500 ? ' bad' : stats.memoryMB > 300 ? ' warn' : '');
+
+      const uptimeSec = Math.floor((Date.now() - appStartTime) / 1000);
+      const h = Math.floor(uptimeSec / 3600);
+      const m = Math.floor((uptimeSec % 3600) / 60);
+      const s = uptimeSec % 60;
+      document.getElementById('diag-uptime').textContent =
+        (h > 0 ? h + 'h ' : '') + (m > 0 || h > 0 ? m + 'm ' : '') + s + 's';
+    }
+  </script>
+</body>
+</html>

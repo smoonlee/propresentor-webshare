@@ -1,0 +1,63 @@
+{
+  "name": "propresenter-webshare",
+  "version": "1.0.0",
+  "description": "Screen sharing helper app — serves a live capture for ProPresenter",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder --win",
+    "build:portable": "electron-builder --win portable"
+  },
+  "keywords": [
+    "propresenter",
+    "webshare",
+    "electron",
+    "screenshare"
+  ],
+  "author": "",
+  "license": "MIT",
+  "build": {
+    "appId": "com.propresenter.webshare",
+    "productName": "ProPresenter WebShare",
+    "icon": "assets/webshare-icon.ico",
+    "afterPack": "build/afterPack.js",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/webshare-icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ProPresenter WebShare",
+      "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}"
+    }
+  },
+  "dependencies": {
+    "express": "5.2.1",
+    "ws": "8.19.0"
+  },
+  "devDependencies": {
+    "electron": "41.0.2",
+    "electron-builder": "26.8.1",
+    "png-to-ico": "3.0.1",
+    "sharp": "0.34.5"
+  }
+}
