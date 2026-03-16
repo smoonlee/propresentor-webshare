@@ -442,11 +442,33 @@
     const serverUrlEl   = document.getElementById('server-url');
 
     /* ── Navigate ── */
+    function sanitizeUrl(raw) {
+      if (!raw) return null;
+      let url = raw.trim();
+      if (!url) return null;
+
+      // Prepend http:// if no scheme is present
+      if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) {
+        url = 'http://' + url;
+      }
+
+      try {
+        const parsed = new URL(url);
+        // Only allow http/https URLs
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return null;
+        }
+        return parsed.toString();
+      } catch {
+        return null;
+      }
+    }
+
     function navigate(url) {
-      if (!url || !url.trim()) return;
-      if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
-      urlInput.value = url;
-      webview.src = url;
+      const safeUrl = sanitizeUrl(url);
+      if (!safeUrl) return;
+      urlInput.value = safeUrl;
+      webview.src = safeUrl;
     }
 
     btnGo.addEventListener('click', () => navigate(urlInput.value));

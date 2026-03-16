@@ -15,6 +15,28 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync package.json version with tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          Write-Host "Setting package.json version to $version"
+          npm version $version --no-git-tag-version --allow-same-version
+          $diff = git diff --name-only
+          if ($diff -contains 'package.json' -or $diff -contains 'package-lock.json') {
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json
+            git commit -m "chore: bump version to $version [skip ci]"
+            git push origin main
+          } else {
+            Write-Host "package.json already at version $version — nothing to commit"
+          }
 
       - name: Setup Node.js
         uses: actions/setup-node@v6.3.0
