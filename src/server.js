@@ -7,6 +7,10 @@ function createServer(port, bindAddress) {
   bindAddress = bindAddress || '0.0.0.0';
   const app = express();
   const httpServer = http.createServer(app);
+  let readyResolve;
+  const ready = new Promise((resolve) => {
+    readyResolve = resolve;
+  });
 
   // Serve the webshare viewer page
   app.use('/webshare', express.static(path.join(__dirname, 'public')));
@@ -42,12 +46,17 @@ function createServer(port, bindAddress) {
 
   httpServer.listen(port, bindAddress, () => {
     const display = bindAddress === '0.0.0.0' ? '127.0.0.1' : bindAddress;
-    console.log(`[WebShare] Server running at http://${display}:${port}/webshare`);
+    const address = httpServer.address();
+    const listenPort = typeof address === 'object' && address ? address.port : port;
+    console.log(`[WebShare] Server running at http://${display}:${listenPort}/webshare`);
+    readyResolve();
   });
 
   return {
     broadcastFrame,
     getViewerCount,
+    ready,
+    address: () => httpServer.address(),
     close: () => {
       wss.close();
       httpServer.close();

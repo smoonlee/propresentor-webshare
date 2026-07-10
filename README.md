@@ -64,16 +64,9 @@ npm run build            # NSIS installer → dist/ProPresenter_WebShare_Setup_1
 npm run build:portable   # Portable .exe  → dist/
 ```
 
-### Automated releases
+### Automated dependency releases
 
-Push a version tag to trigger the GitHub Actions release pipeline:
-
-```bash
-git tag v1.0.0
-git push origin main --tags
-```
-
-This builds the Windows installer and publishes it as a GitHub Release. See [BUILD.md](BUILD.md) for details.
+Dependabot opens npm update pull requests weekly. Every pull request to `main` runs syntax checks, smoke tests, and a Windows installer build. When an npm Dependabot pull request is merged, the release workflow repeats those checks, increments the patch version, updates [CHANGELOG.md](CHANGELOG.md), builds the installer, creates a `vX.Y.Z` tag, and publishes a GitHub Release. If either workflow fails, it creates a GitHub issue and mentions `@smoon_lee`.
 
 ## Project Structure
 

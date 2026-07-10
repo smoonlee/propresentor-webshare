@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   build-windows:
@@ -25,7 +26,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run syntax and smoke tests
+        run: npm run check
+
       - name: Build Windows installer
         run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create issue for failed Dependabot validation
+        if: ${{ failure() && github.event.pull_request.user.login == 'dependabot[bot]' }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const title = `Dependabot validation failed for #${pr.number}`;
+            const { data: issues } = await github.rest.issues.listForRepo({ owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'dependencies', per_page: 100 });
+            if (issues.some((issue) => issue.title === title)) return;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              labels: ['dependencies', 'ci'],
+              body: `@smoon_lee, automated validation failed for a Dependabot dependency update.\n\nPull request: ${pr.html_url}\nFailed workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\nPlease review the failing logs before merging or retrying this update.`,
+            });
