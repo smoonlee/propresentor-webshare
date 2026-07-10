@@ -6,6 +6,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "test": "node --test",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/server.js && node --check src/settings.js && node --check src/webview-preload.js && node --check scripts/update-changelog.js && npm test",
     "build": "electron-builder --win",
     "build:portable": "electron-builder --win portable"
   },
@@ -55,9 +57,9 @@
     "ws": "8.21.0"
   },
   "devDependencies": {
-    "electron": "41.2.1",
+    "electron": "43.1.0",
     "electron-builder": "26.15.3",
-    "png-to-ico": "3.0.1",
+    "png-to-ico": "3.0.2",
     "sharp": "0.35.3"
   }
 }

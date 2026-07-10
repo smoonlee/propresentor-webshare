@@ -165,35 +165,19 @@ The installer filename and Windows file properties will reflect the new version 
 
 ## CI/CD — GitHub Actions release pipeline
 
-The repo includes a GitHub Actions workflow at `.github/workflows/release.yml` that automatically builds and publishes the Windows installer when you push a version tag.
+Dependabot opens weekly npm update pull requests. Each PR to `main` runs `npm run check` (JavaScript syntax checks plus the server/WebSocket smoke test) and a Windows installer build. If either fails, the CI workflow opens a GitHub issue mentioning `@smoon_lee`.
 
-### How to trigger a release
+After a validated npm Dependabot PR is merged, `.github/workflows/release.yml` repeats the checks, increments the patch version, writes the dependency update to `CHANGELOG.md`, commits those release files to `main`, creates a matching `vX.Y.Z` tag, and publishes the Windows installer as a GitHub Release. Dependabot updates for GitHub Actions do not create application releases.
 
-```bash
-# 1. Update the version in package.json
-#    "version": "1.1.0"
-
-# 2. Commit the change
-git add package.json
-git commit -m "Bump version to 1.1.0"
-
-# 3. Create and push a version tag
-git tag v1.1.0
-git push origin main --tags
-```
-
-This will:
-1. Run `npm ci` + `npm run build` on a `windows-latest` runner
-2. Upload `ProPresenter_WebShare_Setup_1.1.0.exe` as a build artifact
-3. Create a GitHub Release with the installer attached and auto-generated release notes
+The workflow needs GitHub Actions to have **Read and write permissions** for workflow `GITHUB_TOKEN`s (repository Settings → Actions → General). If `main` is protected, permit `github-actions[bot]` to push release-version commits, or exempt this workflow through your branch-protection/ruleset configuration.
 
 ### What the pipeline does
 
 | Step | Description |
 |------|-------------|
-| Checkout | Clones the repo at the tagged commit |
+| Checkout | Clones merged `main` after the Dependabot PR closes |
 | Setup Node.js | Installs Node 20 with npm cache |
 | Install deps | `npm ci` (clean install from lockfile) |
+| Validate | `npm run check` verifies syntax and the HTTP/WebSocket smoke test |
 | Build | `npm run build` → NSIS installer in `dist/` |
-| Upload artifact | Stores the `.exe` as a workflow artifact (30-day retention) |
-| GitHub Release | Creates a release at the tag with the installer attached |
+| GitHub Release | Commits the patch version, tags it, and attaches the installer with generated notes |

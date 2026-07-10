@@ -1,42 +1,29 @@
-name: Build & Release
+name: Release validated Dependabot updates
 
 on:
-  push:
-    tags:
-      - "v*" # Trigger on version tags like v1.0.0, v1.2.3
+  pull_request:
+    branches: [main]
+    types: [closed]
 
 permissions:
-  contents: write # Required to create GitHub Releases and upload assets
+  contents: write
+  issues: write
 
 jobs:
-  build-windows:
+  release:
+    # GitHub Actions updates deliberately do not produce application releases.
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/')
     runs-on: windows-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout merged main branch
         uses: actions/checkout@v7.0.0
         with:
-          fetch-depth: 0
           ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Sync package.json version with tag
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          $version = $tag -replace '^v', ''
-          Write-Host "Setting package.json version to $version"
-          npm version $version --no-git-tag-version --allow-same-version
-          $diff = git diff --name-only
-          if ($diff -contains 'package.json' -or $diff -contains 'package-lock.json') {
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add package.json package-lock.json
-            git commit -m "chore: bump version to $version [skip ci]"
-            git push origin main
-          } else {
-            Write-Host "package.json already at version $version — nothing to commit"
-          }
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6.4.0
@@ -47,24 +34,64 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run syntax and smoke tests
+        run: npm run check
+
+      - name: Bump patch version
+        id: version
+        shell: pwsh
+        run: |
+          npm version patch --no-git-tag-version
+          $version = (node -p "require('./package.json').version")
+          $date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "date=$date" >> $env:GITHUB_OUTPUT
+
+      - name: Update changelog
+        run: node scripts/update-changelog.js
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_DATE: ${{ steps.version.outputs.date }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+
       - name: Build Windows installer
         run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: windows-installer
-          path: |
-            dist/*.exe
-            dist/*.yml
+      - name: Commit version and push release tag
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add CHANGELOG.md package.json package-lock.json
+          git commit -m "chore: release v$version"
+          git tag "v$version"
+          git push origin main "v$version"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3.0.1
         with:
-          files: |
-            dist/*.exe
+          tag_name: v${{ steps.version.outputs.version }}
+          files: dist/*.exe
           generate_release_notes: true
-          draft: false
-          prerelease: false
+
+      - name: Create issue if release fails
+        if: ${{ failure() }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const title = `Dependabot release failed for #${pr.number}`;
+            const { data: issues } = await github.rest.issues.listForRepo({ owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'dependencies', per_page: 100 });
+            if (issues.some((issue) => issue.title === title)) return;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              labels: ['dependencies', 'ci'],
+              body: `@smoon_lee, the automated release for a merged Dependabot update failed.\n\nPull request: ${pr.html_url}\nFailed workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\nPlease review the logs and release state before retrying.`,
+            });
