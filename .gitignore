@@ -1,4 +1,38 @@
+# Dependencies
 node_modules/
+
+# Build output (Electron / electron-builder)
 dist/
 out/
+release/
+
+# Test coverage and tool caches
+coverage/
+.nyc_output/
+.cache/
+.parcel-cache/
+.turbo/
+.eslintcache
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment configuration — commit a .env.example if needed
 .env
+.env.*
+!.env.example
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local agent tooling
+.agents/
+.codex/
