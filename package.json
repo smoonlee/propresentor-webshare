@@ -1,6 +1,6 @@
 {
   "name": "propresenter-webshare",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Screen sharing helper app — serves a live capture for ProPresenter",
   "main": "src/main.js",
   "scripts": {
@@ -52,6 +52,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "ProPresenter WebShare",
+      "publisherName": "smoonlee",
       "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}"
     }
   },

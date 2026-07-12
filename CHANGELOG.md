@@ -6,6 +6,13 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-12
+
+### Added
+
+- **Code signing** — installer is now signed via Azure Trusted Signing when the required repository secrets are configured (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME`, `AZURE_TRUSTED_SIGNING_PROFILE_NAME`). The signing step is skipped gracefully if secrets are absent, so unsigned builds continue to work.
+- **Publisher name** — NSIS installer metadata now records the publisher name, replacing the "Unknown" entry shown in Windows Programs and Features and UAC prompts.
+
 ## [1.4.0] - 2026-07-12
 
 ### Changed
