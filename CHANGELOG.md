@@ -25,7 +25,7 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 - LAN IP socket was recreated on every call; it is now cached after the first successful lookup.
 - `alert()` in the renderer (crashed webview handler) replaced with a silent reset to avoid blocking the UI.
 
-## [1.0.1] - 2026-07-10
+## [1.0.1] - 2026-03-16
 
 ### Added
 

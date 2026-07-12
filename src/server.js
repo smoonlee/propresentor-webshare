@@ -7,9 +7,10 @@ function createServer(port, bindAddress) {
   bindAddress = bindAddress || '0.0.0.0';
   const app = express();
   const httpServer = http.createServer(app);
-  let readyResolve;
-  const ready = new Promise((resolve) => {
+  let readyResolve, readyReject;
+  const ready = new Promise((resolve, reject) => {
     readyResolve = resolve;
+    readyReject = reject;
   });
 
   // Serve the webshare viewer page
@@ -42,6 +43,7 @@ function createServer(port, bindAddress) {
 
   httpServer.on('error', (err) => {
     console.error(`[WebShare] Server failed to start: ${err.message}`);
+    readyReject(err);
   });
 
   httpServer.listen(port, bindAddress, () => {
