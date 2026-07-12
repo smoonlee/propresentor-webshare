@@ -6,6 +6,24 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-07-12
+
+### Fixed
+
+- **WebSocket write EOF crash** — added `ws.on('error', ...)` handler on each viewer connection so that asynchronous write failures (e.g. client disconnecting mid-frame at high fps or JPEG quality 100) are silently absorbed instead of propagating as an uncaught main-process exception.
+
+## [1.5.2] - 2026-07-12
+
+### Fixed
+
+- **Node.js engines constraint** — corrected overly strict `>=26.5.0` floor (introduced in v1.4.0) to `>=26`, removing the `EBADENGINE` warning on Node.js 26.4.x.
+
+## [1.5.1] - 2026-07-12
+
+### Fixed
+
+- **Update check retry** — the automatic update check (10 s after launch) now retries once after 60 s when a network error occurs. This fixes the check silently failing on virtual machines where the network stack is not yet ready at startup.
+
 ## [1.5.0] - 2026-07-12
 
 ### Added
@@ -17,7 +35,7 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ### Changed
 
-- **Node.js 26.5.0** — minimum runtime updated from v18 to v26.5.0; all CI/CD workflows pinned to Node.js 26.5.0.
+- **Node.js 26** — minimum runtime updated from v18 to v26; all CI/CD workflows updated to Node.js 26.
 
 ## [1.3.0] - 2026-07-12
 

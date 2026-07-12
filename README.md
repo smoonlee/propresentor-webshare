@@ -40,7 +40,7 @@ An Electron desktop app that loads any web page, captures it, and streams it liv
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) v26.5.0 or later
+- [Node.js](https://nodejs.org/) v26 or later
 - Windows 10/11 (x64) for building the installer
 
 ## Getting Started
