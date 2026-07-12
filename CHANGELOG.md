@@ -35,7 +35,7 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ### Changed
 
-- **Node.js 26.5.0** — minimum runtime updated from v18 to v26.5.0; all CI/CD workflows pinned to Node.js 26.5.0.
+- **Node.js 26** — minimum runtime updated from v18 to v26; all CI/CD workflows updated to Node.js 26.
 
 ## [1.3.0] - 2026-07-12
 
