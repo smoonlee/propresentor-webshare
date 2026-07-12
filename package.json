@@ -1,13 +1,13 @@
 {
   "name": "propresenter-webshare",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Screen sharing helper app — serves a live capture for ProPresenter",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "node --test",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/server.js && node --check src/settings.js && node --check src/webview-preload.js && node --check scripts/update-changelog.js && npm test",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/server.js && node --check src/settings.js && node --check src/webview-preload.js && node --check src/fake-fullscreen-code.js && node --check scripts/update-changelog.js && npm test",
     "build": "electron-builder --win",
     "build:portable": "electron-builder --win portable"
   },
