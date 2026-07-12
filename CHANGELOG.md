@@ -6,6 +6,16 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-07-12
+
+### Changed
+
+- **Audio capture: WASAPI → dshow fallback** — the bundled `ffmpeg-static` is the essentials build which does not include WASAPI (needed for system audio loopback). `listAudioDevices()` now detects which formats the ffmpeg binary supports at runtime: WASAPI is used when available (full build), otherwise DirectShow devices are listed (useful when "Stereo Mix" or a virtual audio cable is present). The `-loopback` WASAPI flag is reordered to appear immediately after `-f wasapi` for more reliable option parsing.
+
+### Added
+
+- **Audio settings note** — when only DirectShow is available (essentials build), a yellow warning is shown below the audio device dropdown explaining that system audio loopback requires either the full ffmpeg build (`winget install Gyan.FFmpeg`) or Stereo Mix enabled in Windows Sound settings.
+
 ## [1.6.1] - 2026-07-12
 
 ### Fixed

@@ -90,28 +90,72 @@ function keyframeInterval(fps) {
   return Math.max(1, Math.ceil(fps / 10));
 }
 
-// List WASAPI render (output) devices available for loopback capture.
-// Loopback captures system audio playback from an output device.
-function listAudioDevices() {
-  const ffmpegPath = getFfmpegPath();
-  return new Promise((resolve) => {
-    execFile(ffmpegPath, ['-f', 'wasapi', '-list_devices', 'true', '-i', 'dummy'],
-      { timeout: 5000 },
-      (_err, _stdout, stderr) => {
-        const devices = [];
-        let inRender = false;
-        for (const line of (stderr || '').split('\n')) {
-          if (line.includes('WASAPI render devices')) { inRender = true; continue; }
-          if (line.includes('WASAPI capture devices')) { inRender = false; continue; }
-          if (inRender) {
-            const m = line.match(/"([^"@][^"]*)"/); // skip @device_cm_ alternative names
-            if (m) devices.push(m[1]);
-          }
-        }
-        resolve(devices);
+// Detect which audio capture formats are available in the bundled ffmpeg build.
+// Cached as a Promise so the device check only runs once per process.
+let _audioFormats = null;
+function getAudioFormats() {
+  if (_audioFormats !== null) return _audioFormats;
+  _audioFormats = new Promise((resolve) => {
+    execFile(getFfmpegPath(), ['-hide_banner', '-devices'], { timeout: 5000 },
+      (_err, stdout, stderr) => {
+        const out = (stdout || '') + (stderr || '');
+        resolve({ wasapi: /\bwasapi\b/.test(out), dshow: /\bdshow\b/.test(out) });
       }
     );
   });
+  return _audioFormats;
+}
+
+// List audio devices available for capture.
+// Returns { wasapiAvailable: boolean, devices: string[] }
+// WASAPI devices are raw names; dshow devices are prefixed with 'dshow:'.
+// wasapiAvailable drives the UI choice to show the default-loopback option.
+async function listAudioDevices() {
+  const formats = await getAudioFormats();
+
+  if (formats.wasapi) {
+    // Full ffmpeg build — use WASAPI render device listing
+    return new Promise((resolve) => {
+      execFile(getFfmpegPath(), ['-f', 'wasapi', '-list_devices', 'true', '-i', 'dummy'],
+        { timeout: 5000 },
+        (_err, _stdout, stderr) => {
+          const devices = [];
+          let inRender = false;
+          for (const line of (stderr || '').split('\n')) {
+            if (line.includes('WASAPI render devices')) { inRender = true; continue; }
+            if (line.includes('WASAPI capture devices')) { inRender = false; continue; }
+            if (inRender) {
+              const m = line.match(/"([^"@][^"]*)"/); // skip @device_cm_ alternative names
+              if (m) devices.push(m[1]);
+            }
+          }
+          resolve({ wasapiAvailable: true, devices });
+        }
+      );
+    });
+  }
+
+  if (formats.dshow) {
+    // Essentials build — fall back to DirectShow device listing.
+    // Loopback requires "Stereo Mix" or a virtual audio cable to be present.
+    return new Promise((resolve) => {
+      execFile(getFfmpegPath(),
+        ['-hide_banner', '-f', 'dshow', '-list_devices', 'true', '-i', 'dummy'],
+        { timeout: 5000 },
+        (_err, _stdout, stderr) => {
+          const devices = [];
+          for (const line of (stderr || '').split('\n')) {
+            // dshow prints: [dshow @ ...] "Device Name" (audio)
+            const m = line.match(/"([^"]+)"\s*\(audio\)/);
+            if (m) devices.push('dshow:' + m[1]);
+          }
+          resolve({ wasapiAvailable: false, devices });
+        }
+      );
+    });
+  }
+
+  return { wasapiAvailable: false, devices: [] };
 }
 
 // Spawn an ffmpeg process: reads raw BGRA frames on stdin, outputs fragmented MP4 on stdout.
@@ -125,17 +169,26 @@ function spawnEncoder(codec, width, height, fps, audioDevice = null) {
     ? ['-keyint_min', String(kf), '-sc_threshold', '0']
     : [];
 
-  // When audio is requested, WASAPI render device (input 0) precedes the video pipe (input 1).
-  // audioDevice === '' means use the default Windows playback device (WASAPI loopback).
-  const audioInputArgs = audioDevice !== null
-    ? ['-f', 'wasapi', '-thread_queue_size', '512', '-loopback', '-i', audioDevice]
-    : [];
-  const mapArgs = audioDevice !== null
-    ? ['-map', '1:v:0', '-map', '0:a:0']
-    : [];
-  const audioOutputArgs = audioDevice !== null
-    ? ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000']
-    : [];
+  // When audio is requested, determine the capture format from the device value:
+  //   ''             → WASAPI default render device (loopback)
+  //   'dshow:name'   → DirectShow audio device (e.g. Stereo Mix, virtual cable)
+  //   'any other'    → WASAPI named device (loopback), backwards compat
+  // WASAPI loopback is input 0; the video pipe becomes input 1 (hence the -map flags).
+  let audioInputArgs = [];
+  let mapArgs = [];
+  let audioOutputArgs = [];
+
+  if (audioDevice !== null) {
+    if (audioDevice.startsWith('dshow:')) {
+      const devName = audioDevice.slice(6);
+      audioInputArgs = ['-f', 'dshow', '-thread_queue_size', '512', '-i', `audio=${devName}`];
+    } else {
+      // WASAPI loopback: put -loopback immediately after -f wasapi for reliable option parsing
+      audioInputArgs = ['-f', 'wasapi', '-loopback', '-thread_queue_size', '512', '-i', audioDevice];
+    }
+    mapArgs = ['-map', '1:v:0', '-map', '0:a:0'];
+    audioOutputArgs = ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000'];
+  }
 
   const args = [
     '-hide_banner', '-loglevel', 'error',   // suppress banner/progress; only real errors

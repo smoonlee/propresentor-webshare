@@ -494,6 +494,12 @@
             <option value="">Loading…</option>
           </select>
         </div>
+        <div id="s-audio-note" style="display:none;padding:6px 16px 0 16px;font-size:11px;color:#f0a840;line-height:1.4">
+          ⚠ System audio loopback requires the full ffmpeg build (WASAPI). dshow devices listed
+          are input-only (microphone). To enable loopback: install ffmpeg via
+          <code style="background:#1b2a40;padding:1px 4px;border-radius:3px">winget install Gyan.FFmpeg</code>
+          or enable Stereo Mix in Windows Sound settings.
+        </div>
       </div>
 
       <div class="s-section">
@@ -658,33 +664,60 @@
     function setAudioDeviceRowVisible(visible) {
       const row = document.getElementById('s-audio-device-row');
       row.style.display = visible ? 'flex' : 'none';
+      // The s-audio-note is revealed by populateAudioDevices when WASAPI is unavailable.
+      // When hiding the row, always hide the note too.
+      if (!visible) {
+        const note = document.getElementById('s-audio-note');
+        if (note) note.style.display = 'none';
+      }
     }
 
     async function populateAudioDevices(selectedDevice) {
       const sel = sFields.audioDevice;
+      const note = document.getElementById('s-audio-note');
       sel.innerHTML = '';
 
-      // Always-present option: WASAPI loopback of the default Windows playback device.
-      // Empty string is the ffmpeg WASAPI "default" identifier.
-      const defOpt = document.createElement('option');
-      defOpt.value = '';
-      defOpt.textContent = 'System audio (default loopback)';
-      sel.appendChild(defOpt);
-
-      // Enumerate additional named devices (may be empty on some systems)
       try {
-        const devices = await api.listAudioDevices();
-        for (const d of devices) {
+        const result = await api.listAudioDevices();
+
+        if (result.wasapiAvailable) {
+          // Full ffmpeg build — WASAPI loopback of the default Windows playback device is always available.
+          const defOpt = document.createElement('option');
+          defOpt.value = '';
+          defOpt.textContent = 'System audio (default loopback)';
+          sel.appendChild(defOpt);
+          if (note) note.style.display = 'none';
+        } else {
+          // Essentials ffmpeg build — no WASAPI, show a helper note.
+          if (note) note.style.display = '';
+        }
+
+        // Append enumerated devices (WASAPI named devices, or dshow devices)
+        for (const d of result.devices) {
           const opt = document.createElement('option');
           opt.value = d;
-          opt.textContent = d;
+          opt.textContent = d.startsWith('dshow:') ? d.slice(6) : d;
           sel.appendChild(opt);
         }
-      } catch (_) {}
 
-      // Restore saved selection, fall back to default
+        if (sel.options.length === 0) {
+          const noOpt = document.createElement('option');
+          noOpt.value = '';
+          noOpt.textContent = '(no audio capture devices found)';
+          sel.appendChild(noOpt);
+        }
+
+      } catch (_) {
+        // Fallback: assume WASAPI default is available
+        const defOpt = document.createElement('option');
+        defOpt.value = '';
+        defOpt.textContent = 'System audio (default loopback)';
+        sel.appendChild(defOpt);
+      }
+
+      // Restore saved selection
       const match = [...sel.options].find(o => o.value === (selectedDevice || ''));
-      sel.value = match ? match.value : '';
+      sel.value = match ? match.value : (sel.options[0]?.value ?? '');
     }
 
     sFields.audioEnabled.addEventListener('change', () => {
