@@ -162,17 +162,21 @@ async function listAudioDevices() {
 
   if (formats.dshow) {
     // Essentials build — fall back to DirectShow device listing.
-    // Loopback requires "Stereo Mix" or a virtual audio cable to be present.
+    // Regular dshow audio devices are capture inputs (microphones, webcam audio).
+    // The only dshow devices useful for system audio loopback are output-mix
+    // devices like "Stereo Mix" or "What U Hear" (disabled by default in Windows).
+    // Filter to only those candidates; plain microphone/webcam devices are useless here.
     return new Promise((resolve) => {
       execFile(getFfmpegPath(),
         ['-hide_banner', '-f', 'dshow', '-list_devices', 'true', '-i', 'dummy'],
         { timeout: 5000 },
         (_err, _stdout, stderr) => {
           const devices = [];
+          const LOOPBACK_NAMES = /stereo mix|what u hear|wave out|loopback/i;
           for (const line of (stderr || '').split('\n')) {
             // dshow prints: [dshow @ ...] "Device Name" (audio)
             const m = line.match(/"([^"]+)"\s*\(audio\)/);
-            if (m) devices.push('dshow:' + m[1]);
+            if (m && LOOPBACK_NAMES.test(m[1])) devices.push('dshow:' + m[1]);
           }
           resolve({ wasapiAvailable: false, devices });
         }
