@@ -191,6 +191,11 @@ function startH264CaptureLoop(wcId) {
 
     ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps, audioDevice);
 
+    // Suppress write EOF errors on stdin — emitted asynchronously when ffmpeg
+    // exits while the capture loop is still writing frames to the pipe.
+    // The 'close' event on the process handles fallback/restart.
+    ffmpegProc.stdin.on('error', () => {});
+
     // Drain stderr so the OS pipe buffer never fills and blocks ffmpeg
     ffmpegProc.stderr.on('data', (d) => console.error('[Encoder]', d.toString().trimEnd()));
 

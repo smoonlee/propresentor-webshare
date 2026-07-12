@@ -6,6 +6,12 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-07-12
+
+### Fixed
+
+- **ffmpeg stdin write EOF crash** — when ffmpeg exits (e.g. WASAPI loopback fails to open or the audio device is unavailable), the capture loop emits an unhandled `'error'` event on `ffmpegProc.stdin` as it tries to write the next frame. Added `ffmpegProc.stdin.on('error', () => {})` to absorb these asynchronous write errors, matching the same fix applied to WebSocket sends in v1.5.3.
+
 ## [1.6.0] - 2026-07-12
 
 ### Added
