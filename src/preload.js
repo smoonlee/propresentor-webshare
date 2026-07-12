@@ -42,4 +42,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Diagnostics
   getDiagnostics: () => ipcRenderer.invoke('get-diagnostics'),
+
+  // App version & update check
+  getVersion: () => ipcRenderer.invoke('get-version'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  // Update notifications
+  onUpdateAvailable: (cb) => {
+    ipcRenderer.removeAllListeners('update-available');
+    ipcRenderer.on('update-available', (_e, info) => cb(info));
+  },
+
+  // Encoder detection
+  getEncoderInfo: () => ipcRenderer.invoke('get-encoder-info'),
+  onEncoderDetected: (cb) => {
+    ipcRenderer.removeAllListeners('encoder-detected');
+    ipcRenderer.on('encoder-detected', (_e, info) => cb(info));
+  },
 });

@@ -10,8 +10,8 @@ How to compile the Windows installer (`.exe`) from source.
 | npm | (bundled with Node) | Package manager |
 | Windows 10/11 | x64 | Build host (NSIS target is Windows-only) |
 
-> **Note:** `electron-builder` downloads NSIS and other build tools automatically on first run. No separate NSIS installation is required.
-
+> **Note:** `electron-builder` downloads NSIS and other build tools automatically on first run. No separate NSIS installation is required.>
+> **ffmpeg:** `ffmpeg-static` (~70 MB) is bundled automatically via the `asarUnpack` config. No separate ffmpeg installation is needed.
 ## Step-by-step
 
 ### 1. Clone and install dependencies
@@ -44,7 +44,7 @@ The output is in the `dist/` folder:
 
 ```
 dist/
-  ProPresenter_WebShare_Setup_1.0.0.exe    ← installer (~95 MB)
+  ProPresenter_WebShare_Setup_1.3.0.exe    ← installer (~165 MB, includes ffmpeg)
   win-unpacked/                            ← unpacked app directory
 ```
 

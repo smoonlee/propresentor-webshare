@@ -16,6 +16,8 @@ const DEFAULTS = {
   allowMedia: true,
   allowGeolocation: true,
   allowNotifications: true,
+  streamMode: 'h264',  // 'h264' | 'jpeg'
+  hwEncoder: 'auto',   // 'auto' | 'nvenc' | 'qsv' | 'amf' | 'software'
 };
 
 let cache = null;
@@ -25,7 +27,8 @@ function load() {
   try {
     const raw = fs.readFileSync(SETTINGS_FILE, 'utf-8');
     cache = { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch {
+  } catch (err) {
+    if (err instanceof SyntaxError) console.warn('[Settings] settings.json is corrupt, using defaults.');
     cache = { ...DEFAULTS };
   }
   return cache;
