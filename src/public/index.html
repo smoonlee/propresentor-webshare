@@ -3,15 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <title>WebShare — Live</title>
-  <link rel="icon" type="image/png" href="favicon.png" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-    #frame {
+    #frame-jpeg, #frame-h264 {
       width: 100%;
       height: 100%;
       object-fit: contain;
-      display: block;
+      display: none;
     }
     #overlay {
       position: fixed;
@@ -47,35 +46,48 @@
   </style>
 </head>
 <body>
-  <img id="frame" alt="Waiting for stream…" />
+  <img    id="frame-jpeg" alt="Waiting for stream…" />
+  <video  id="frame-h264" autoplay muted playsinline></video>
   <div id="overlay">Waiting for stream…</div>
   <button id="btn-fs" title="Toggle fullscreen">⛶</button>
 
   <script>
-    const frame = document.getElementById('frame');
-    const overlay = document.getElementById('overlay');
+    const frameJpeg = document.getElementById('frame-jpeg');
+    const frameH264 = document.getElementById('frame-h264');
+    const overlay   = document.getElementById('overlay');
     let reconnectDelay = 1000;
+    let mode = null;
+    let mediaSource = null;
+    let sourceBuffer = null;
+    let pendingChunks = [];
+    let fatalError = false;
 
     function connect() {
+      if (fatalError) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${proto}://${location.host}/webshare/ws`);
       ws.binaryType = 'arraybuffer';
+      let configured = false;
 
-      ws.onopen = () => {
-        reconnectDelay = 1000;
-      };
+      ws.onopen = () => { reconnectDelay = 1000; };
 
       ws.onmessage = (e) => {
-        const blob = new Blob([e.data], { type: 'image/jpeg' });
-        const url = URL.createObjectURL(blob);
-        const prev = frame.src;
-        frame.src = url;
-        overlay.classList.add('hidden');
-        // Free previous blob URL
-        if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+        // First message from server is always a JSON text config
+        if (!configured && typeof e.data === 'string') {
+          configured = true;
+          try { setupMode(JSON.parse(e.data), ws); } catch (_) {}
+          return;
+        }
+        if (mode === 'jpeg') {
+          handleJpegFrame(e.data);
+        } else if (mode === 'h264') {
+          appendH264Chunk(new Uint8Array(e.data));
+        }
       };
 
       ws.onclose = () => {
+        if (fatalError) return;
+        teardownH264();
         overlay.textContent = 'Disconnected — reconnecting…';
         overlay.classList.remove('hidden');
         setTimeout(connect, reconnectDelay);
@@ -83,6 +95,117 @@
       };
 
       ws.onerror = () => ws.close();
+    }
+
+    function setupMode(cfg, ws) {
+      if (cfg.mode === 'jpeg') {
+        mode = 'jpeg';
+        frameJpeg.style.display = 'block';
+        frameH264.style.display = 'none';
+      } else if (cfg.mode === 'h264') {
+        const mimeType = `video/mp4; codecs="${cfg.codec}"`;
+        if (!window.MediaSource) {
+          // Browser has no MSE at all — reconnecting will never help
+          fatalError = true;
+          overlay.textContent = 'Media Source Extensions are not supported in this browser. Ask the host to enable JPEG mode in Settings.';
+          ws.close();
+          return;
+        }
+        if (!MediaSource.isTypeSupported(mimeType)) {
+          // Codec unsupported in this browser, but server may switch to JPEG — allow reconnect
+          overlay.textContent = 'H.264 streaming is not supported in this browser. Ask the host to enable JPEG mode in Settings.';
+          ws.close();
+          return;
+        }
+        frameJpeg.style.display = 'none';
+        frameH264.style.display = 'block';
+        setupMSE(mimeType);
+        mode = 'h264'; // must be set AFTER setupMSE — teardownH264 inside resets mode to null
+      }
+    }
+
+    function handleJpegFrame(data) {
+      const blob = new Blob([data], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      const prev = frameJpeg.src;
+      frameJpeg.src = url;
+      overlay.classList.add('hidden');
+      if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+    }
+
+    function setupMSE(mimeType) {
+      teardownH264();
+      pendingChunks = [];
+      mediaSource = new MediaSource();
+      frameH264.src = URL.createObjectURL(mediaSource);
+      frameH264.play().catch(() => {});
+
+      mediaSource.addEventListener('sourceopen', () => {
+        try {
+          sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+          sourceBuffer.mode = 'sequence';
+        } catch (e) {
+          console.error('[WebShare] addSourceBuffer failed:', e);
+          return;
+        }
+
+        sourceBuffer.addEventListener('updateend', () => {
+          trimBuffer();
+          // Drain any queued chunks
+          if (pendingChunks.length > 0 && !sourceBuffer.updating) {
+            try { sourceBuffer.appendBuffer(pendingChunks.shift()); } catch (_) {}
+          }
+          overlay.classList.add('hidden');
+        });
+
+        // Drain anything that arrived before sourceopen
+        if (pendingChunks.length > 0 && !sourceBuffer.updating) {
+          try { sourceBuffer.appendBuffer(pendingChunks.shift()); } catch (_) {}
+        }
+      }, { once: true });
+    }
+
+    function appendH264Chunk(chunk) {
+      if (!sourceBuffer || !mediaSource || mediaSource.readyState !== 'open') {
+        // Cap the queue to ~4 s worth of frames (120 @ 30 fps) so we don't
+        // accumulate stale content when the SourceBuffer is slow to open.
+        if (pendingChunks.length >= 120) pendingChunks.shift();
+        pendingChunks.push(chunk);
+        return;
+      }
+      if (sourceBuffer.updating) {
+        pendingChunks.push(chunk);
+        return;
+      }
+      try {
+        sourceBuffer.appendBuffer(chunk);
+      } catch (_) {
+        pendingChunks = []; // clear on error (e.g. QuotaExceededError)
+      }
+    }
+
+    function trimBuffer() {
+      if (!sourceBuffer || sourceBuffer.updating || sourceBuffer.buffered.length === 0) return;
+      const end   = sourceBuffer.buffered.end(0);
+      const start = sourceBuffer.buffered.start(0);
+      if (end - start > 5) {
+        try { sourceBuffer.remove(start, end - 3); } catch (_) {}
+      }
+    }
+
+    function teardownH264() {
+      mode = null;
+      pendingChunks = [];
+      sourceBuffer = null;
+      if (mediaSource && mediaSource.readyState === 'open') {
+        try { mediaSource.endOfStream(); } catch (_) {}
+      }
+      mediaSource = null;
+      if (frameH264.src && frameH264.src.startsWith('blob:')) {
+        const old = frameH264.src;
+        frameH264.src = '';
+        URL.revokeObjectURL(old);
+      }
     }
 
     connect();

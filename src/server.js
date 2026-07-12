@@ -19,9 +19,33 @@ function createServer(port, bindAddress) {
   // WebSocket for streaming live frames to viewers
   const wss = new WebSocketServer({ server: httpServer, path: '/webshare/ws' });
 
+  let lastFrame = null;
+  let currentMode = 'jpeg';
+  let currentCodecStr = '';
+  let h264InitSegment = null;
+  let pendingH264Viewers = []; // viewers waiting for the H.264 init segment
+
   wss.on('connection', (ws) => {
     console.log(`[WebShare] Viewer connected (${wss.clients.size} total)`);
+    // First message: mode config so the viewer sets up the correct display path
+    try {
+      ws.send(JSON.stringify({ type: 'config', mode: currentMode, codec: currentCodecStr }));
+    } catch (_) {}
+    // Seed the viewer:
+    if (currentMode === 'h264') {
+      if (h264InitSegment) {
+        // Init segment already available — send immediately
+        try { ws.send(h264InitSegment); } catch (_) {}
+      } else {
+        // Encoder not yet started; queue viewer until init segment is ready
+        pendingH264Viewers.push(ws);
+      }
+    } else if (currentMode === 'jpeg' && lastFrame) {
+      try { ws.send(lastFrame); } catch (_) {}
+    }
     ws.on('close', () => {
+      const idx = pendingH264Viewers.indexOf(ws);
+      if (idx !== -1) pendingH264Viewers.splice(idx, 1);
       console.log(`[WebShare] Viewer disconnected (${wss.clients.size} total)`);
     });
   });
@@ -29,11 +53,58 @@ function createServer(port, bindAddress) {
   const MAX_BUFFERED = 256 * 1024; // 256 KB — skip frames for slow clients
 
   function broadcastFrame(jpegBuffer) {
+    lastFrame = jpegBuffer;
     if (wss.clients.size === 0) return;
     for (const client of wss.clients) {
       if (client.readyState === 1 && client.bufferedAmount < MAX_BUFFERED) {
-        client.send(jpegBuffer);
+        try { client.send(jpegBuffer); } catch (_) {}
       }
+    }
+  }
+
+  // Broadcast an H.264 fragment chunk (no deduplication or caching needed)
+  function broadcastChunk(chunk) {
+    if (wss.clients.size === 0) return;
+    for (const client of wss.clients) {
+      if (client.readyState === 1 && client.bufferedAmount < MAX_BUFFERED) {
+        try { client.send(chunk); } catch (_) {}
+      }
+    }
+  }
+
+  function clearLastFrame() {
+    lastFrame = null;
+  }
+
+  // Store the H.264 initialisation segment (ftyp+moov) so late-joining viewers
+  // receive it before live fragments, allowing their MSE SourceBuffer to decode.
+  function setH264Init(buf) {
+    h264InitSegment = buf;
+    // Flush any viewers that connected before the init segment was ready
+    if (pendingH264Viewers.length > 0) {
+      const pending = pendingH264Viewers.splice(0);
+      for (const ws of pending) {
+        if (ws.readyState === 1) {
+          try { ws.send(buf); } catch (_) {}
+        }
+      }
+    }
+  }
+
+  function clearH264Init() {
+    h264InitSegment = null;
+    pendingH264Viewers = [];
+  }
+
+  // Switch stream mode; disconnects all current viewers so they reconnect
+  // and receive the correct mode config message.
+  function setMode(mode, codecStr) {
+    currentMode = mode;
+    currentCodecStr = codecStr || '';
+    h264InitSegment = null;
+    pendingH264Viewers = [];
+    for (const client of wss.clients) {
+      try { client.close(1000, 'mode-change'); } catch (_) {}
     }
   }
 
@@ -56,10 +127,16 @@ function createServer(port, bindAddress) {
 
   return {
     broadcastFrame,
+    broadcastChunk,
+    clearLastFrame,
+    setMode,
+    setH264Init,
+    clearH264Init,
     getViewerCount,
     ready,
     address: () => httpServer.address(),
     close: () => {
+      for (const client of wss.clients) client.terminate();
       wss.close();
       httpServer.close();
     },

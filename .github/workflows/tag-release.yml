@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     # Skip tags pushed by the Dependabot release automation — that workflow
     # handles its own release creation via softprops/action-gh-release.
     if: github.actor != 'github-actions[bot]'
@@ -22,7 +22,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6.4.0
         with:
-          node-version: current
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
@@ -35,6 +35,24 @@ jobs:
         run: npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: dist/*.exe
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3.0.1

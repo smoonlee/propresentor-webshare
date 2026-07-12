@@ -2,8 +2,10 @@ const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, webContents, s
 const path = require('path');
 const os = require('os');
 const dgram = require('dgram');
+const https = require('https');
 const { createServer } = require('./server');
 const settings = require('./settings');
+const { detectCodec, spawnEncoder, MSE_CODEC_STRING } = require('./encoder');
 
 // Fake fullscreen JS — injected into guest pages via executeJavaScript (bypasses CSP).
 // Replaces the Fullscreen API with a CSS-based visual fake so video fills the
@@ -24,6 +26,8 @@ let guestWebContentsId = null;
 let currentCaptureFps = null;
 let currentJpegQuality = null;
 let lastFrameBuffer = null;
+let ffmpegProc = null;
+let encoderInfo = null;
 
 // Diagnostics counters
 let diagFrameCount = 0;
@@ -64,6 +68,9 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
+  // Check for updates 10 s after the window loads — no startup impact.
+  mainWindow.webContents.once('did-finish-load', () => setTimeout(checkForUpdates, 10000));
+
   // Prevent the BrowserWindow from ever entering OS-level fullscreen
   mainWindow.setFullScreenable(false);
 
@@ -77,6 +84,7 @@ function createWindow() {
       }
     }
     guest.on('dom-ready', injectFakeFullscreen);
+    guest.on('destroyed', () => { if (guestWebContentsId === guest.id) guestWebContentsId = null; });
 
     // Safety net: if native fullscreen somehow triggers, force-exit it.
     guest.on('enter-html-full-screen', () => {
@@ -91,10 +99,29 @@ function createWindow() {
   }
 }
 
+// Scan a Buffer for the byte offset of a named MP4 box (e.g. 'moof')
+function findMp4BoxOffset(buf, type) {
+  let offset = 0;
+  while (offset + 8 <= buf.length) {
+    const size = buf.readUInt32BE(offset);
+    const boxType = buf.slice(offset + 4, offset + 8).toString('ascii');
+    if (boxType === type) return offset;
+    if (size < 8 || offset + size > buf.length) break;
+    offset += size;
+  }
+  return -1;
+}
+
 function stopCapture() {
   if (captureInterval) { clearInterval(captureInterval); captureInterval = null; }
   captureWebContentsId = null;
   lastFrameBuffer = null;
+  if (server) { server.clearLastFrame(); server.clearH264Init(); }
+  if (ffmpegProc) {
+    try { ffmpegProc.stdin.end(); } catch (_) {}
+    ffmpegProc.kill();
+    ffmpegProc = null;
+  }
 }
 
 function startCaptureLoop(wcId) {
@@ -129,10 +156,108 @@ function startCaptureLoop(wcId) {
   }, 1000 / fps);
 }
 
+function startH264CaptureLoop(wcId) {
+  stopCapture();
+  captureWebContentsId = wcId;
+  const fps = currentCaptureFps || settings.get('captureFps');
+  let capturing = false;
+  let ffmpegWidth = 0;
+  let ffmpegHeight = 0;
+  let initBuffer = Buffer.alloc(0);
+  let initExtracted = false;
+
+  function spawnFfmpegForSize(w, h) {
+    if (ffmpegProc) {
+      try { ffmpegProc.stdin.end(); } catch (_) {}
+      ffmpegProc.kill();
+      ffmpegProc = null;
+    }
+    initBuffer = Buffer.alloc(0);
+    initExtracted = false;
+    ffmpegWidth = w;
+    ffmpegHeight = h;
+    if (server) server.clearH264Init();
+
+    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps);
+
+    // Drain stderr so the OS pipe buffer never fills and blocks ffmpeg
+    ffmpegProc.stderr.on('data', (d) => console.error('[Encoder]', d.toString().trimEnd()));
+
+    ffmpegProc.stdout.on('data', (chunk) => {
+      if (!initExtracted) {
+        initBuffer = Buffer.concat([initBuffer, chunk]);
+        const moofOff = findMp4BoxOffset(initBuffer, 'moof');
+        if (moofOff > 0) {
+          const initSeg = initBuffer.slice(0, moofOff);
+          const remaining = initBuffer.slice(moofOff);
+          initExtracted = true;
+          initBuffer = Buffer.alloc(0);
+          if (server) server.setH264Init(initSeg);
+          if (remaining.length > 0) {
+            diagBytesSent += remaining.length;
+            diagLastFrameSize = remaining.length;
+            if (server) server.broadcastChunk(remaining);
+          }
+        }
+        return;
+      }
+      diagBytesSent += chunk.length;
+      diagLastFrameSize = chunk.length;
+      if (server) server.broadcastChunk(chunk);
+    });
+
+    ffmpegProc.on('error', (err) => {
+      console.error('[Encoder] ffmpeg error:', err.message);
+    });
+
+    ffmpegProc.on('close', (code) => {
+      if (code !== 0 && code !== null) {
+        console.error('[Encoder] ffmpeg exited with code', code, '\u2014 falling back to JPEG');
+        // Fall back to JPEG so the stream remains usable
+        if (captureWebContentsId != null && server) {
+          server.setMode('jpeg', '');
+          startCaptureLoop(captureWebContentsId);
+        }
+      }
+    });
+  }
+
+  captureInterval = setInterval(() => {
+    if (capturing) { diagSkippedFrames++; return; }
+    capturing = true;
+    try {
+      const wc = webContents.fromId(captureWebContentsId);
+      if (!wc || wc.isDestroyed()) { stopCapture(); capturing = false; return; }
+      wc.capturePage().then((image) => {
+        capturing = false;
+        if (!server || image.isEmpty()) return;
+        const { width: w, height: h } = image.getSize();
+        if (w === 0 || h === 0) return; // webview not yet rendered
+        if (w !== ffmpegWidth || h !== ffmpegHeight) {
+          spawnFfmpegForSize(w, h);
+        }
+        if (!ffmpegProc) return;
+        diagFrameCount++;
+        const bitmap = image.toBitmap();
+        if (!ffmpegProc.stdin.destroyed) {
+          try { ffmpegProc.stdin.write(bitmap); } catch (_) {}
+        }
+      }).catch(() => { capturing = false; });
+    } catch (_) { stopCapture(); capturing = false; }
+  }, 1000 / fps);
+}
+
 // ── IPC: start capturing the webview content ──
 ipcMain.on('start-capture', (_event, webContentsId) => {
   if (webContentsId !== guestWebContentsId) return;
-  startCaptureLoop(webContentsId);
+  const mode = settings.get('streamMode') || 'h264';
+  if (mode === 'h264' && encoderInfo) {
+    server.setMode('h264', MSE_CODEC_STRING);
+    startH264CaptureLoop(webContentsId);
+  } else {
+    server.setMode('jpeg', '');
+    startCaptureLoop(webContentsId);
+  }
 });
 
 ipcMain.on('stop-capture', () => {
@@ -199,6 +324,9 @@ ipcMain.handle('get-diagnostics', () => {
   };
 });
 
+ipcMain.handle('get-version', () => app.getVersion());
+ipcMain.handle('check-for-updates', () => checkForUpdates());
+
 // ── IPC: open URL in default browser ──
 ipcMain.on('open-external', (_event, url) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
@@ -221,8 +349,8 @@ ipcMain.handle('get-always-on-top', () => {
 // ── IPC: settings ──
 function sanitizeSettings(s) {
   return {
-    port: Math.max(1, Math.min(65535, parseInt(s.port, 10) || 4983)),
-    bindAddress: /^(\d{1,3}\.){3}\d{1,3}$|^localhost$/.test(s.bindAddress) ? s.bindAddress : '0.0.0.0',
+    port: Math.max(1024, Math.min(65535, parseInt(s.port, 10) || 4983)),
+    bindAddress: /^(\d{1,3}\.){3}\d{1,3}$|^localhost$/.test(s.bindAddress) && s.bindAddress.split('.').every(o => +o <= 255) ? s.bindAddress : '0.0.0.0',
     captureFps: Math.max(1, Math.min(60, parseInt(s.captureFps, 10) || 30)),
     jpegQuality: Math.max(10, Math.min(100, parseInt(s.jpegQuality, 10) || 70)),
     startupUrl: typeof s.startupUrl === 'string' && /^https?:\/\//i.test(s.startupUrl) ? s.startupUrl : '',
@@ -232,6 +360,8 @@ function sanitizeSettings(s) {
     allowMedia: !!s.allowMedia,
     allowGeolocation: !!s.allowGeolocation,
     allowNotifications: !!s.allowNotifications,
+    streamMode: ['h264', 'jpeg'].includes(s.streamMode) ? s.streamMode : 'h264',
+    hwEncoder: ['auto', 'nvenc', 'qsv', 'amf', 'software'].includes(s.hwEncoder) ? s.hwEncoder : 'auto',
   };
 }
 
@@ -245,14 +375,23 @@ ipcMain.handle('save-settings', (_event, s) => {
   return settings.save(sanitized);
 });
 
+ipcMain.handle('get-encoder-info', () => encoderInfo || null);
+
 ipcMain.on('apply-settings', (_event, s) => {
   // Apply live-changeable settings without restart (clamped to safe ranges)
-  currentCaptureFps = Math.max(1, Math.min(60, parseInt(s.captureFps, 10) || 12));
+  currentCaptureFps = Math.max(1, Math.min(60, parseInt(s.captureFps, 10) || 30));
   currentJpegQuality = Math.max(10, Math.min(100, parseInt(s.jpegQuality, 10) || 70));
 
-  // Restart capture with new FPS/quality if active
+  // Restart capture in the correct mode if active
   if (captureWebContentsId != null) {
-    startCaptureLoop(captureWebContentsId);
+    const mode = s.streamMode || 'h264';
+    if (mode === 'h264' && encoderInfo) {
+      server.setMode('h264', MSE_CODEC_STRING);
+      startH264CaptureLoop(captureWebContentsId);
+    } else {
+      server.setMode('jpeg', '');
+      startCaptureLoop(captureWebContentsId);
+    }
   }
 
   // Always on top
@@ -269,6 +408,48 @@ ipcMain.on('apply-settings', (_event, s) => {
 
 function openSettingsPanel() {
   if (mainWindow) mainWindow.webContents.send('toggle-settings');
+}
+
+// ── Update checker ──
+function isNewer(tag, current) {
+  const parse = v => v.replace(/^v/, '').split('.').map(Number);
+  const [lM, lm, lp = 0] = parse(tag);
+  const [cM, cm, cp = 0] = parse(current);
+  return lM > cM || (lM === cM && lm > cm) || (lM === cM && lm === cm && lp > cp);
+}
+
+function checkForUpdates() {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'api.github.com',
+      path: '/repos/smoonlee/propresentor-webshare/releases/latest',
+      headers: { 'User-Agent': 'propresentor-webshare-updater' },
+    };
+    const req = https.get(options, (res) => {
+      if (res.statusCode !== 200) { res.resume(); resolve({ available: false }); return; }
+      let body = '';
+      res.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > 65536) { res.destroy(); resolve({ available: false }); }
+      });
+      res.on('end', () => {
+        try {
+          const release = JSON.parse(body);
+          const tag = release.tag_name;
+          if (tag && isNewer(tag, app.getVersion())) {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('update-available', { version: tag, url: release.html_url });
+            }
+            resolve({ available: true, version: tag, url: release.html_url });
+          } else {
+            resolve({ available: false });
+          }
+        } catch (_) { resolve({ available: false }); }
+      });
+    });
+    req.setTimeout(8000, () => req.destroy());
+    req.on('error', () => resolve({ available: false }));
+  });
 }
 
 // ── Application menu ──
@@ -289,21 +470,24 @@ app.whenReady().then(() => {
     dialog.showErrorBox('Server failed to start', err.message);
   });
 
-  // Strip Content-Security-Policy headers from HTTP responses so the
-  // webview preload's <script> injection (first-pass) is not blocked by CSP.
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    if (details.url.startsWith('http')) {
-      const responseHeaders = {};
-      for (const [key, value] of Object.entries(details.responseHeaders)) {
-        if (key.toLowerCase() !== 'content-security-policy') {
-          responseHeaders[key] = value;
-        }
+  // Detect best H.264 encoder in the background; switch mode once ready
+  if ((cfg.streamMode || 'h264') !== 'jpeg') {
+    detectCodec(cfg.hwEncoder || 'auto').then((info) => {
+      encoderInfo = info;
+      console.log('[Encoder] Using:', info.label);
+      // If a capture is already running in JPEG fallback, upgrade it to H.264
+      if (captureWebContentsId != null) {
+        server.setMode('h264', MSE_CODEC_STRING);
+        startH264CaptureLoop(captureWebContentsId);
       }
-      callback({ responseHeaders });
-      return;
-    }
-    callback({});
-  });
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('encoder-detected', info);
+      }
+    }).catch((err) => {
+      console.error('[Encoder] Detection failed:', err.message);
+      encoderInfo = { codec: 'libx264', hw: false, label: 'libx264 (software)' };
+    });
+  }
 
   // Block the native fullscreen permission so Chromium never enters real
   // fullscreen for the webview.  Our JS fake fullscreen (injected via
@@ -333,6 +517,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
   if (diagInterval) clearInterval(diagInterval);
+  if (ffmpegProc) { try { ffmpegProc.stdin.end(); } catch (_) {} ffmpegProc.kill(); }
   if (server) server.close();
   app.quit();
 });
