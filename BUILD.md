@@ -217,8 +217,9 @@ az trustedsigning certificate-profile create \
 **3. Create a service principal and grant it the signer role**
 
 ```bash
-# Create the service principal
-az ad sp create-for-rbac --name sp-codesigning --sdk-auth
+# Create the service principal (no secret — OIDC only)
+az ad app create --display-name sp-codesigning
+az ad sp create --id <app-id>
 
 # Grant the signer role on the certificate profile
 az role assignment create \
@@ -227,7 +228,22 @@ az role assignment create \
   --scope "/subscriptions/<sub>/resourceGroups/rg-codesigning/providers/Microsoft.CodeSigning/codeSigningAccounts/<account-name>/certificateProfiles/<profile-name>"
 ```
 
-**4. Get the endpoint URL**
+**4. Add a federated credential (OIDC)**
+
+In the Azure Portal, open the app registration → Certificates & secrets → Federated credentials → Add credential:
+
+| Field | Value |
+|-------|-------|
+| Federated credential scenario | GitHub Actions deploying Azure resources |
+| Organisation | `smoonlee` |
+| Repository | `propresentor-webshare` |
+| Entity type | Tag |
+| Tag | `v*` |
+| Name | `github-tag-release` |
+
+This allows any `v*` tag push on the repo to exchange a GitHub OIDC token for an Azure access token — no client secret required.
+
+**5. Get the endpoint URL**
 
 In the Azure Portal, open the Trusted Signing account → Overview. The endpoint is shown as:
 ```
@@ -236,15 +252,14 @@ https://<region>.codesigning.azure.net
 
 ### GitHub repository secrets
 
-Add these six secrets to the repository (Settings → Secrets and variables → Actions):
+Add these **five** secrets to the repository (Settings → Secrets and variables → Actions):
 
 | Secret | Value |
 |--------|-------|
 | `AZURE_TENANT_ID` | Azure AD tenant ID |
 | `AZURE_CLIENT_ID` | Service principal client (application) ID |
-| `AZURE_CLIENT_SECRET` | Service principal secret |
 | `AZURE_CODE_SIGNING_ENDPOINT` | Endpoint URL, e.g. `https://eus.codesigning.azure.net` |
 | `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME` | Trusted Signing account name |
 | `AZURE_TRUSTED_SIGNING_PROFILE_NAME` | Certificate profile name |
 
-Once all six secrets are present, the next tag push will produce a signed installer and the SmartScreen warning will be suppressed.
+No `AZURE_CLIENT_SECRET` is needed — authentication uses OIDC federation. Once all five secrets are present, the next tag push will produce a signed installer and the SmartScreen warning will be suppressed.
