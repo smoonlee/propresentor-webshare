@@ -6,7 +6,7 @@ How to compile the Windows installer (`.exe`) from source.
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Node.js](https://nodejs.org/) | 18+ | Runtime & npm |
+| [Node.js](https://nodejs.org/) | 26.5.0 | Runtime & npm |
 | npm | (bundled with Node) | Package manager |
 | Windows 10/11 | x64 | Build host (NSIS target is Windows-only) |
 
@@ -176,8 +176,75 @@ The workflow needs GitHub Actions to have **Read and write permissions** for wor
 | Step | Description |
 |------|-------------|
 | Checkout | Clones merged `main` after the Dependabot PR closes |
-| Setup Node.js | Installs Node 20 with npm cache |
+| Setup Node.js | Installs Node 26.5.0 with npm cache |
 | Install deps | `npm ci` (clean install from lockfile) |
 | Validate | `npm run check` verifies syntax and the HTTP/WebSocket smoke test |
 | Build | `npm run build` → NSIS installer in `dist/` |
+| Sign | Signs the installer via Azure Trusted Signing (skipped if secrets are absent) |
 | GitHub Release | Commits the patch version, tags it, and attaches the installer with generated notes |
+
+## Code signing — Azure Trusted Signing
+
+The release workflow signs the installer using [Azure Trusted Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/), which removes the "Publisher: Unknown" SmartScreen warning. Signing is skipped automatically when the secrets below are not configured, so unsigned local builds continue to work.
+
+### One-time Azure setup
+
+**1. Create an Azure Trusted Signing account**
+
+```bash
+az extension add --name trustedsigning
+az group create --name rg-codesigning --location eastus
+az trustedsigning create \
+  --name <account-name> \
+  --resource-group rg-codesigning \
+  --location eastus \
+  --sku Basic
+```
+
+**2. Create a Certificate Profile** (Public Trust for public distribution)
+
+```bash
+az trustedsigning certificate-profile create \
+  --account-name <account-name> \
+  --resource-group rg-codesigning \
+  --profile-name <profile-name> \
+  --profile-type PublicTrust \
+  --identity-validation-id <identity-validation-id>
+```
+
+> Identity validation must be completed first — submit your organisation details in the Azure Portal under the Trusted Signing account → Identity Validation.
+
+**3. Create a service principal and grant it the signer role**
+
+```bash
+# Create the service principal
+az ad sp create-for-rbac --name sp-codesigning --sdk-auth
+
+# Grant the signer role on the certificate profile
+az role assignment create \
+  --assignee <client-id> \
+  --role "Trusted Signing Certificate Profile Signer" \
+  --scope "/subscriptions/<sub>/resourceGroups/rg-codesigning/providers/Microsoft.CodeSigning/codeSigningAccounts/<account-name>/certificateProfiles/<profile-name>"
+```
+
+**4. Get the endpoint URL**
+
+In the Azure Portal, open the Trusted Signing account → Overview. The endpoint is shown as:
+```
+https://<region>.codesigning.azure.net
+```
+
+### GitHub repository secrets
+
+Add these six secrets to the repository (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|--------|-------|
+| `AZURE_TENANT_ID` | Azure AD tenant ID |
+| `AZURE_CLIENT_ID` | Service principal client (application) ID |
+| `AZURE_CLIENT_SECRET` | Service principal secret |
+| `AZURE_CODE_SIGNING_ENDPOINT` | Endpoint URL, e.g. `https://eus.codesigning.azure.net` |
+| `AZURE_TRUSTED_SIGNING_ACCOUNT_NAME` | Trusted Signing account name |
+| `AZURE_TRUSTED_SIGNING_PROFILE_NAME` | Certificate profile name |
+
+Once all six secrets are present, the next tag push will produce a signed installer and the SmartScreen warning will be suppressed.
