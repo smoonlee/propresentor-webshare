@@ -125,8 +125,6 @@
         frameJpeg.style.display = 'block';
         frameH264.style.display = 'none';
       } else if (cfg.mode === 'h264') {
-        const mimeType = `video/mp4; codecs="${cfg.codec}"`;
-        streamHasAudio = cfg.codec.includes(','); // e.g. 'avc1.640028, mp4a.40.2'
         if (!window.MediaSource) {
           // Browser has no MSE at all — reconnecting will never help
           fatalError = true;
@@ -134,11 +132,31 @@
           ws.close();
           return;
         }
+        // Determine which codec to use. If the server sends audio+video (e.g. 'avc1.640028, mp4a.40.2')
+        // but the browser does not support it (common on iOS / older Android), fall back to video-only.
+        let codec = cfg.codec;
+        streamHasAudio = cfg.codec.includes(',');
+        let mimeType = `video/mp4; codecs="${codec}"`;
         if (!MediaSource.isTypeSupported(mimeType)) {
-          // Codec unsupported in this browser, but server may switch to JPEG — allow reconnect
-          overlay.textContent = 'H.264 streaming is not supported in this browser. Ask the host to enable JPEG mode in Settings.';
-          ws.close();
-          return;
+          if (streamHasAudio) {
+            // Try stripping the audio codec — maybe the browser supports video-only MSE
+            const videoCodec = cfg.codec.split(',')[0].trim();
+            const videoMime  = `video/mp4; codecs="${videoCodec}"`;
+            if (MediaSource.isTypeSupported(videoMime)) {
+              codec = videoCodec;
+              mimeType = videoMime;
+              streamHasAudio = false; // audio won't be in the decoded stream
+            } else {
+              overlay.textContent = 'H.264 streaming is not supported in this browser. Ask the host to enable JPEG mode in Settings.';
+              ws.close();
+              return;
+            }
+          } else {
+            // Codec unsupported in this browser, but server may switch to JPEG — allow reconnect
+            overlay.textContent = 'H.264 streaming is not supported in this browser. Ask the host to enable JPEG mode in Settings.';
+            ws.close();
+            return;
+          }
         }
         frameJpeg.style.display = 'none';
         frameH264.style.display = 'block';
