@@ -6,7 +6,7 @@ How to compile the Windows installer (`.exe`) from source.
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Node.js](https://nodejs.org/) | 18+ | Runtime & npm |
+| [Node.js](https://nodejs.org/) | 26.5.0 | Runtime & npm |
 | npm | (bundled with Node) | Package manager |
 | Windows 10/11 | x64 | Build host (NSIS target is Windows-only) |
 
@@ -176,7 +176,7 @@ The workflow needs GitHub Actions to have **Read and write permissions** for wor
 | Step | Description |
 |------|-------------|
 | Checkout | Clones merged `main` after the Dependabot PR closes |
-| Setup Node.js | Installs Node 20 with npm cache |
+| Setup Node.js | Installs Node 26.5.0 with npm cache |
 | Install deps | `npm ci` (clean install from lockfile) |
 | Validate | `npm run check` verifies syntax and the HTTP/WebSocket smoke test |
 | Build | `npm run build` → NSIS installer in `dist/` |
