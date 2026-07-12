@@ -6,6 +6,12 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-07-12
+
+### Changed
+
+- **Auto-detect system ffmpeg with WASAPI** — `getFfmpegPath()` now checks `PATH` for a system-installed ffmpeg (e.g. `winget install Gyan.FFmpeg`) before falling back to the bundled essentials build. If a full-build ffmpeg with WASAPI support is found, it is used for all encoding and device listing. This means audio loopback just works after installing the full ffmpeg, with no manual configuration. The amber warning in Settings is only shown when no WASAPI-capable ffmpeg is available.
+
 ## [1.6.2] - 2026-07-12
 
 ### Changed

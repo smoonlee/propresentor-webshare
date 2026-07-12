@@ -1,6 +1,6 @@
 'use strict';
 
-const { execFile, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const { app } = require('electron');
 
 // MSE codec strings — H.264 High Profile Level 4.0
@@ -9,13 +9,38 @@ const MSE_CODEC_STRING = 'avc1.640028';
 // With AAC-LC audio track (mp4a.40.2 = MPEG-4 AAC Low Complexity)
 const MSE_CODEC_STRING_WITH_AUDIO = 'avc1.640028, mp4a.40.2';
 
+// Cached ffmpeg path.  On Windows, prefer a system-installed full build (e.g.
+// `winget install Gyan.FFmpeg`) over the bundled ffmpeg-static essentials build
+// because the essentials build excludes WASAPI (needed for audio loopback).
+let _ffmpegPath = null;
+
 function getFfmpegPath() {
-  const base = require('ffmpeg-static');
-  // In a packaged ASAR, the binary is unpacked via asarUnpack config
-  if (app.isPackaged) {
-    return base.replace(/app\.asar[\\/]/g, 'app.asar.unpacked/');
+  if (_ffmpegPath !== null) return _ffmpegPath;
+
+  if (process.platform === 'win32') {
+    try {
+      // where.exe returns all ffmpeg paths in PATH; use the first one
+      const whereOut = execFileSync('where.exe', ['ffmpeg'],
+        { encoding: 'utf8', timeout: 2000 });
+      const sysPath = whereOut.trim().split(/\r?\n/)[0].trim();
+      if (sysPath) {
+        // Verify this build includes WASAPI (full build vs essentials)
+        const devices = execFileSync(sysPath, ['-hide_banner', '-devices'],
+          { encoding: 'utf8', timeout: 5000 });
+        if (/\bwasapi\b/.test(devices)) {
+          console.log('[Encoder] Using system ffmpeg with WASAPI:', sysPath);
+          _ffmpegPath = sysPath;
+          return _ffmpegPath;
+        }
+      }
+    } catch (_) { /* no system ffmpeg in PATH, or check failed — fall through */ }
   }
-  return base;
+
+  const base = require('ffmpeg-static');
+  _ffmpegPath = app.isPackaged
+    ? base.replace(/app\.asar[\\/]/g, 'app.asar.unpacked/')
+    : base;
+  return _ffmpegPath;
 }
 
 // Test whether a given H.264 encoder is available on this machine
