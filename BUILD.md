@@ -6,7 +6,7 @@ How to compile the Windows installer (`.exe`) from source.
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Node.js](https://nodejs.org/) | 26.5.0 | Runtime & npm |
+| [Node.js](https://nodejs.org/) | 26.x | Runtime & npm |
 | npm | (bundled with Node) | Package manager |
 | Windows 10/11 | x64 | Build host (NSIS target is Windows-only) |
 

@@ -6,6 +6,12 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-07-12
+
+### Fixed
+
+- **Node.js engines constraint** — corrected overly strict `>=26.5.0` floor (introduced in v1.4.0) to `>=26`, removing the `EBADENGINE` warning on Node.js 26.4.x.
+
 ## [1.5.1] - 2026-07-12
 
 ### Fixed
