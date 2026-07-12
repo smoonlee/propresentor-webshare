@@ -167,10 +167,10 @@ function startH264CaptureLoop(wcId) {
   stopCapture();
   captureWebContentsId = wcId;
   const fps = currentCaptureFps || settings.get('captureFps');
-  const audioDevice = settings.get('audioEnabled') && settings.get('audioDevice')
-    ? settings.get('audioDevice')
+  const audioDevice = settings.get('audioEnabled')
+    ? (settings.get('audioDevice') || '')
     : null;
-  const codecStr = audioDevice ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING;
+  const codecStr = audioDevice !== null ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING;
   let capturing = false;
   let ffmpegWidth = 0;
   let ffmpegHeight = 0;
@@ -262,10 +262,11 @@ function startH264CaptureLoop(wcId) {
 ipcMain.on('start-capture', (_event, webContentsId) => {
   if (webContentsId !== guestWebContentsId) return;
   const mode = settings.get('streamMode') || 'h264';
-  const audioDevice = settings.get('audioEnabled') && settings.get('audioDevice')
-    ? settings.get('audioDevice') : null;
+  const audioDevice = settings.get('audioEnabled')
+    ? (settings.get('audioDevice') || '')
+    : null;
   if (mode === 'h264' && encoderInfo) {
-    server.setMode('h264', audioDevice ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING);
+    server.setMode('h264', audioDevice !== null ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING);
     startH264CaptureLoop(webContentsId);
   } else {
     server.setMode('jpeg', '');
@@ -415,9 +416,9 @@ ipcMain.on('apply-settings', (_event, s) => {
   // Restart capture in the correct mode if active
   if (captureWebContentsId != null) {
     const mode = s.streamMode || 'h264';
-    const audioDevice = s.audioEnabled && s.audioDevice ? s.audioDevice : null;
+    const audioDevice = s.audioEnabled ? (s.audioDevice !== undefined ? s.audioDevice : '') : null;
     if (mode === 'h264' && encoderInfo) {
-      server.setMode('h264', audioDevice ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING);
+      server.setMode('h264', audioDevice !== null ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING);
       startH264CaptureLoop(captureWebContentsId);
     } else {
       server.setMode('jpeg', '');

@@ -125,14 +125,15 @@ function spawnEncoder(codec, width, height, fps, audioDevice = null) {
     ? ['-keyint_min', String(kf), '-sc_threshold', '0']
     : [];
 
-  // When audio is requested, WASAPI render device (input 0) precedes the video pipe (input 1)
-  const audioInputArgs = audioDevice
+  // When audio is requested, WASAPI render device (input 0) precedes the video pipe (input 1).
+  // audioDevice === '' means use the default Windows playback device (WASAPI loopback).
+  const audioInputArgs = audioDevice !== null
     ? ['-f', 'wasapi', '-thread_queue_size', '512', '-loopback', '-i', audioDevice]
     : [];
-  const mapArgs = audioDevice
+  const mapArgs = audioDevice !== null
     ? ['-map', '1:v:0', '-map', '0:a:0']
     : [];
-  const audioOutputArgs = audioDevice
+  const audioOutputArgs = audioDevice !== null
     ? ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000']
     : [];
 
