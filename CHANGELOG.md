@@ -6,6 +6,12 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-07-12
+
+### Fixed
+
+- **WebSocket write EOF crash** — added `ws.on('error', ...)` handler on each viewer connection so that asynchronous write failures (e.g. client disconnecting mid-frame at high fps or JPEG quality 100) are silently absorbed instead of propagating as an uncaught main-process exception.
+
 ## [1.5.2] - 2026-07-12
 
 ### Fixed

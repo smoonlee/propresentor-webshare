@@ -43,6 +43,10 @@ function createServer(port, bindAddress) {
     } else if (currentMode === 'jpeg' && lastFrame) {
       try { ws.send(lastFrame); } catch (_) {}
     }
+    ws.on('error', () => {
+      // Suppress async write errors (e.g. write EOF when client disconnects
+      // mid-send at high fps / large frame size). The 'close' event still fires.
+    });
     ws.on('close', () => {
       const idx = pendingH264Viewers.indexOf(ws);
       if (idx !== -1) pendingH264Viewers.splice(idx, 1);
