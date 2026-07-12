@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, webContents, session } = require('electron');
+const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, webContents, session, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const dgram = require('dgram');
@@ -8,58 +8,7 @@ const settings = require('./settings');
 // Fake fullscreen JS — injected into guest pages via executeJavaScript (bypasses CSP).
 // Replaces the Fullscreen API with a CSS-based visual fake so video fills the
 // webview area but never triggers Chromium's native fullscreen.
-const FAKE_FULLSCREEN_JS = `
-(function() {
-  if (window.__ppFakeFs) return;
-  window.__ppFakeFs = true;
-  var fsEl = null;
-  var CLS = '__pp_fs';
-  var s = document.createElement('style');
-  s.textContent =
-    '.' + CLS + '{position:fixed!important;top:0!important;left:0!important;' +
-    'width:100vw!important;height:100vh!important;z-index:2147483647!important;' +
-    'background:#000!important;margin:0!important;padding:0!important;border:none!important}' +
-    '.' + CLS + ' video,.' + CLS + ' .html5-video-container,.' + CLS + ' .html5-main-video{' +
-    'width:100%!important;height:100%!important;object-fit:contain!important;' +
-    'max-width:none!important;max-height:none!important}';
-  (document.head||document.documentElement).appendChild(s);
-  function notify(){
-    document.dispatchEvent(new Event('fullscreenchange'));
-    document.dispatchEvent(new Event('webkitfullscreenchange'));
-  }
-  var fakeReq = function(){
-    if(fsEl&&fsEl!==this) fsEl.classList.remove(CLS);
-    fsEl=this; this.classList.add(CLS); notify();
-    return Promise.resolve();
-  };
-  Element.prototype.requestFullscreen = fakeReq;
-  Element.prototype.webkitRequestFullscreen = fakeReq;
-  Element.prototype.webkitRequestFullScreen = fakeReq;
-  if(typeof HTMLElement!=='undefined'){
-    HTMLElement.prototype.requestFullscreen = fakeReq;
-    HTMLElement.prototype.webkitRequestFullscreen = fakeReq;
-    HTMLElement.prototype.webkitRequestFullScreen = fakeReq;
-  }
-  var fakeExit = function(){
-    if(fsEl){fsEl.classList.remove(CLS);fsEl=null;}
-    notify(); return Promise.resolve();
-  };
-  Document.prototype.exitFullscreen = fakeExit;
-  Document.prototype.webkitExitFullscreen = fakeExit;
-  Document.prototype.webkitCancelFullScreen = fakeExit;
-  var dp=Document.prototype;
-  Object.defineProperty(dp,'fullscreenElement',{get:function(){return fsEl},configurable:true});
-  Object.defineProperty(dp,'webkitFullscreenElement',{get:function(){return fsEl},configurable:true});
-  Object.defineProperty(dp,'webkitCurrentFullScreenElement',{get:function(){return fsEl},configurable:true});
-  Object.defineProperty(dp,'fullscreenEnabled',{get:function(){return true},configurable:true});
-  Object.defineProperty(dp,'webkitFullscreenEnabled',{get:function(){return true},configurable:true});
-  Object.defineProperty(dp,'fullscreen',{get:function(){return !!fsEl},configurable:true});
-  Object.defineProperty(dp,'webkitIsFullScreen',{get:function(){return !!fsEl},configurable:true});
-  document.addEventListener('keydown',function(e){
-    if(e.key==='Escape'&&fsEl) fakeExit();
-  },true);
-})();
-`;
+const FAKE_FULLSCREEN_JS = require('./fake-fullscreen-code');
 
 // Disable hardware acceleration entirely so video renders via software
 // and is visible both in the webview and in capturePage() output.
@@ -71,6 +20,7 @@ let mainWindow;
 let server;
 let captureInterval = null;
 let captureWebContentsId = null;
+let guestWebContentsId = null;
 let currentCaptureFps = null;
 let currentJpegQuality = null;
 let lastFrameBuffer = null;
@@ -84,8 +34,9 @@ let diagBandwidth = 0;
 let diagAvgFrameSize = 0;
 let diagSkippedFrames = 0;
 let diagSkippedInSec = 0;
+let diagInterval = null;
 
-setInterval(() => {
+diagInterval = setInterval(() => {
   diagFps = diagFrameCount;
   diagBandwidth = diagBytesSent;
   diagAvgFrameSize = diagFrameCount > 0 ? diagBytesSent / diagFrameCount : 0;
@@ -119,6 +70,7 @@ function createWindow() {
   // When the webview guest attaches, inject fake fullscreen override into every
   // page it loads.  executeJavaScript runs in the main world and bypasses CSP.
   mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
+    guestWebContentsId = guest.id;
     function injectFakeFullscreen() {
       if (!guest.isDestroyed()) {
         guest.executeJavaScript(FAKE_FULLSCREEN_JS).catch(() => {});
@@ -150,11 +102,15 @@ function startCaptureLoop(wcId) {
   captureWebContentsId = wcId;
   const fps = currentCaptureFps || settings.get('captureFps');
   const quality = currentJpegQuality || settings.get('jpegQuality');
+  let capturing = false;
   captureInterval = setInterval(() => {
+    if (capturing) { diagSkippedFrames++; return; }
+    capturing = true;
     try {
       const wc = webContents.fromId(captureWebContentsId);
-      if (!wc || wc.isDestroyed()) { stopCapture(); return; }
+      if (!wc || wc.isDestroyed()) { stopCapture(); capturing = false; return; }
       wc.capturePage().then((image) => {
+        capturing = false;
         if (server && !image.isEmpty()) {
           const jpeg = image.toJPEG(quality);
           // Skip if frame is identical to previous
@@ -168,13 +124,14 @@ function startCaptureLoop(wcId) {
           diagLastFrameSize = jpeg.length;
           server.broadcastFrame(jpeg);
         }
-      }).catch(() => {});
-    } catch (_) { stopCapture(); }
+      }).catch(() => { capturing = false; });
+    } catch (_) { stopCapture(); capturing = false; }
   }, 1000 / fps);
 }
 
 // ── IPC: start capturing the webview content ──
 ipcMain.on('start-capture', (_event, webContentsId) => {
+  if (webContentsId !== guestWebContentsId) return;
   startCaptureLoop(webContentsId);
 });
 
@@ -196,13 +153,16 @@ ipcMain.handle('get-viewer-count', () => {
 ipcMain.handle('get-port', () => settings.get('port'));
 
 // ── IPC: diagnostics ──
+let cachedLanIp = null;
 function getLanIp() {
+  if (cachedLanIp) return Promise.resolve(cachedLanIp);
   return new Promise((resolve) => {
     const sock = dgram.createSocket('udp4');
     // connect() doesn't send data — it just triggers OS route resolution
     sock.connect(53, '1.1.1.1', () => {
       const ip = sock.address().address;
       sock.close();
+      cachedLanIp = ip;
       resolve(ip);
     });
     sock.on('error', () => {
@@ -211,9 +171,14 @@ function getLanIp() {
       const ifaces = os.networkInterfaces();
       for (const name of Object.keys(ifaces)) {
         for (const iface of ifaces[name]) {
-          if (iface.family === 'IPv4' && !iface.internal) { resolve(iface.address); return; }
+          if (iface.family === 'IPv4' && !iface.internal) {
+            cachedLanIp = iface.address;
+            resolve(iface.address);
+            return;
+          }
         }
       }
+      cachedLanIp = '127.0.0.1';
       resolve('127.0.0.1');
     });
   });
@@ -236,7 +201,9 @@ ipcMain.handle('get-diagnostics', () => {
 
 // ── IPC: open URL in default browser ──
 ipcMain.on('open-external', (_event, url) => {
-  shell.openExternal(url);
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+    shell.openExternal(url);
+  }
 });
 
 // ── IPC: toggle always-on-top ──
@@ -252,9 +219,31 @@ ipcMain.handle('get-always-on-top', () => {
 });
 
 // ── IPC: settings ──
+function sanitizeSettings(s) {
+  return {
+    port: Math.max(1, Math.min(65535, parseInt(s.port, 10) || 4983)),
+    bindAddress: /^(\d{1,3}\.){3}\d{1,3}$|^localhost$/.test(s.bindAddress) ? s.bindAddress : '0.0.0.0',
+    captureFps: Math.max(1, Math.min(60, parseInt(s.captureFps, 10) || 30)),
+    jpegQuality: Math.max(10, Math.min(100, parseInt(s.jpegQuality, 10) || 70)),
+    startupUrl: typeof s.startupUrl === 'string' && /^https?:\/\//i.test(s.startupUrl) ? s.startupUrl : '',
+    alwaysOnTop: !!s.alwaysOnTop,
+    showDiagnostics: !!s.showDiagnostics,
+    launchOnStartup: !!s.launchOnStartup,
+    allowMedia: !!s.allowMedia,
+    allowGeolocation: !!s.allowGeolocation,
+    allowNotifications: !!s.allowNotifications,
+  };
+}
+
 ipcMain.handle('get-settings', () => settings.getAll());
 ipcMain.handle('get-defaults', () => settings.getDefaults());
-ipcMain.handle('save-settings', (_event, s) => settings.save(s));
+ipcMain.handle('save-settings', (_event, s) => {
+  const sanitized = sanitizeSettings(s);
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: sanitized.launchOnStartup });
+  }
+  return settings.save(sanitized);
+});
 
 ipcMain.on('apply-settings', (_event, s) => {
   // Apply live-changeable settings without restart (clamped to safe ranges)
@@ -274,7 +263,7 @@ ipcMain.on('apply-settings', (_event, s) => {
 
   // Notify the main window so it can update UI (e.g. status bar visibility)
   if (mainWindow) {
-    mainWindow.webContents.send('settings-changed', s);
+    mainWindow.webContents.send('settings-changed', sanitizeSettings(s));
   }
 });
 
@@ -292,7 +281,13 @@ function setupMenu() {
 // ── App lifecycle ──
 app.whenReady().then(() => {
   const cfg = settings.load();
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: cfg.launchOnStartup });
+  }
   server = createServer(cfg.port, cfg.bindAddress);
+  server.ready.catch((err) => {
+    dialog.showErrorBox('Server failed to start', err.message);
+  });
 
   // Strip Content-Security-Policy headers from HTTP responses so the
   // webview preload's <script> injection (first-pass) is not blocked by CSP.
@@ -314,10 +309,11 @@ app.whenReady().then(() => {
   // fullscreen for the webview.  Our JS fake fullscreen (injected via
   // executeJavaScript) provides the visual fullscreen experience instead.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    if (permission === 'fullscreen') {
-      callback(false);
-      return;
-    }
+    if (permission === 'fullscreen') { callback(false); return; }
+    const cfg = settings.load();
+    if (permission === 'media' && !cfg.allowMedia) { callback(false); return; }
+    if (permission === 'geolocation' && !cfg.allowGeolocation) { callback(false); return; }
+    if (permission === 'notifications' && !cfg.allowNotifications) { callback(false); return; }
     callback(true);
   });
 
@@ -336,6 +332,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
+  if (diagInterval) clearInterval(diagInterval);
   if (server) server.close();
   app.quit();
 });

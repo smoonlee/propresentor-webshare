@@ -327,7 +327,7 @@
 
   <!-- WebView (interactive for the operator) -->
   <div id="webview-container">
-    <webview id="webview" src="about:blank" allowpopups></webview>
+    <webview id="webview" src="about:blank"></webview>
   </div>
 
   <!-- Status bar -->
@@ -401,6 +401,13 @@
             <span class="slider"></span>
           </label>
         </div>
+        <div class="s-field">
+          <label>Launch on startup</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-launch-startup" />
+            <span class="slider"></span>
+          </label>
+        </div>
       </div>
 
       <div class="s-section">
@@ -409,6 +416,31 @@
           <label>Show diagnostics</label>
           <label class="s-toggle">
             <input type="checkbox" id="s-diag" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="s-section">
+        <h3>Permissions</h3>
+        <div class="s-field">
+          <label>Camera / microphone</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-allow-media" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="s-field">
+          <label>Location</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-allow-geo" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="s-field">
+          <label>Notifications</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-allow-notif" />
             <span class="slider"></span>
           </label>
         </div>
@@ -489,34 +521,46 @@
     let settingsOrigQuality = null;
 
     const sFields = {
-      port:        document.getElementById('s-port'),
-      bind:        document.getElementById('s-bind'),
-      fps:         document.getElementById('s-fps'),
-      quality:     document.getElementById('s-quality'),
-      startupUrl:  document.getElementById('s-startup-url'),
-      aot:         document.getElementById('s-aot'),
-      diag:        document.getElementById('s-diag'),
+      port:          document.getElementById('s-port'),
+      bind:          document.getElementById('s-bind'),
+      fps:           document.getElementById('s-fps'),
+      quality:       document.getElementById('s-quality'),
+      startupUrl:    document.getElementById('s-startup-url'),
+      aot:           document.getElementById('s-aot'),
+      launchStartup: document.getElementById('s-launch-startup'),
+      diag:          document.getElementById('s-diag'),
+      allowMedia:    document.getElementById('s-allow-media'),
+      allowGeo:      document.getElementById('s-allow-geo'),
+      allowNotif:    document.getElementById('s-allow-notif'),
     };
 
     function populateSettings(s) {
-      sFields.port.value       = s.port;
-      sFields.bind.value       = s.bindAddress;
-      sFields.fps.value        = s.captureFps;
-      sFields.quality.value    = s.jpegQuality;
-      sFields.startupUrl.value = s.startupUrl || '';
-      sFields.aot.checked      = s.alwaysOnTop;
-      sFields.diag.checked     = s.showDiagnostics;
+      sFields.port.value              = s.port;
+      sFields.bind.value              = s.bindAddress;
+      sFields.fps.value               = s.captureFps;
+      sFields.quality.value           = s.jpegQuality;
+      sFields.startupUrl.value        = s.startupUrl || '';
+      sFields.aot.checked             = s.alwaysOnTop;
+      sFields.launchStartup.checked   = !!s.launchOnStartup;
+      sFields.diag.checked            = s.showDiagnostics;
+      sFields.allowMedia.checked      = s.allowMedia !== false;
+      sFields.allowGeo.checked        = !!s.allowGeolocation;
+      sFields.allowNotif.checked      = !!s.allowNotifications;
     }
 
     function collectSettings() {
       return {
-        port:         Math.max(1024, Math.min(65535, parseInt(sFields.port.value, 10) || 4983)),
-        bindAddress:  sFields.bind.value.trim() || '0.0.0.0',
-        captureFps:   Math.max(1, Math.min(60, parseInt(sFields.fps.value, 10) || 12)),
-        jpegQuality:  Math.max(10, Math.min(100, parseInt(sFields.quality.value, 10) || 70)),
-        startupUrl:   sFields.startupUrl.value.trim(),
-        alwaysOnTop:  sFields.aot.checked,
-        showDiagnostics: sFields.diag.checked,
+        port:               Math.max(1024, Math.min(65535, parseInt(sFields.port.value, 10) || 4983)),
+        bindAddress:        sFields.bind.value.trim() || '0.0.0.0',
+        captureFps:         Math.max(1, Math.min(60, parseInt(sFields.fps.value, 10) || 12)),
+        jpegQuality:        Math.max(10, Math.min(100, parseInt(sFields.quality.value, 10) || 70)),
+        startupUrl:         sFields.startupUrl.value.trim(),
+        alwaysOnTop:        sFields.aot.checked,
+        launchOnStartup:    sFields.launchStartup.checked,
+        showDiagnostics:    sFields.diag.checked,
+        allowMedia:         sFields.allowMedia.checked,
+        allowGeolocation:   sFields.allowGeo.checked,
+        allowNotifications: sFields.allowNotif.checked,
       };
     }
 
@@ -576,9 +620,13 @@
       populateSettings(defaults);
     });
 
-    // ESC to close
+    // ESC to close, Enter to save
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && settingsOverlay.classList.contains('open')) closeSettings();
+      if (!settingsOverlay.classList.contains('open')) return;
+      if (e.key === 'Escape') { closeSettings(); return; }
+      if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
+        document.getElementById('s-save').click();
+      }
     });
 
     // React to live settings changes
@@ -623,10 +671,13 @@
       urlInput.value = e.url;
     });
 
+    webview.addEventListener('new-window', (e) => {
+      api.openExternal(e.url);
+    });
+
     webview.addEventListener('crashed', () => {
       urlInput.value = '';
       webview.src = 'about:blank';
-      alert('The page crashed. It has been reset to a blank page.');
     });
 
     /* ── Auto-load startup URL (wait for preload + webview ready) ── */

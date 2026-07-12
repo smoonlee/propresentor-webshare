@@ -8,7 +8,7 @@ An Electron desktop app that loads any web page, captures it as a live JPEG stre
 ┌──────────────┐                  ┌──────────────┐   WebSocket    ┌───────────────────┐
 │  Web Page    │   capturePage()  │  Electron App │  ──────────►  │  /webshare viewer │
 │  (webview)   │  ─────────────►  │  (operator)   │               │  (ProPresenter /  │
-└──────────────┘                  └──────────────┘               │   any browser)    │
+└──────────────┘                  └──────────────┘                │   any browser)    │
                                                                   └───────────────────┘
 ```
 
@@ -23,10 +23,13 @@ An Electron desktop app that loads any web page, captures it as a live JPEG stre
 - Frame deduplication — identical frames are skipped to save bandwidth
 - WebSocket backpressure — slow viewers are skipped (256 KB buffer limit)
 - LAN IP auto-detection (UDP route trick)
-- Settings flyout (port, bind address, FPS, quality, startup URL, always-on-top, diagnostics)
+- Configurable permission controls per site — camera/microphone, location, notifications
+- Settings flyout (port, bind address, FPS, quality, startup URL, always-on-top, launch on startup, diagnostics)
+- Enter key saves settings; ESC closes the panel
 - Draggable diagnostics overlay (FPS, bandwidth, frame size, memory, viewer count, uptime)
 - Status bar with viewer count and clickable/copyable server URL
 - Pin (always-on-top) toggle
+- Launch on startup — registers as a Windows login item
 - Auto-load startup URL on launch
 - No menu bar — clean, minimal UI
 - Fake fullscreen containment — video fullscreen stays inside the webview, toolbar and status bar remain visible
@@ -60,7 +63,7 @@ See [BUILD.md](BUILD.md) for full build instructions.
 Quick build:
 
 ```bash
-npm run build            # NSIS installer → dist/ProPresenter_WebShare_Setup_1.0.0.exe
+npm run build            # NSIS installer → dist/ProPresenter_WebShare_Setup_1.1.0.exe
 npm run build:portable   # Portable .exe  → dist/
 ```
 
@@ -98,7 +101,11 @@ build/
 | JPEG quality | 70 | Compression quality (10–100, live) |
 | Startup URL | _(empty)_ | Auto-load this URL on launch |
 | Always on top | off | Keep window above all others |
+| Launch on startup | off | Register app as a Windows login item (packaged build only) |
 | Show diagnostics | off | Show the draggable diagnostics overlay |
+| Allow camera/mic | on | Permit camera and microphone access requests from the loaded page |
+| Allow location | on | Permit geolocation access requests from the loaded page |
+| Allow notifications | on | Permit notification permission requests from the loaded page |
 
 ## Keyboard Shortcuts
 

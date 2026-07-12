@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleAlwaysOnTop: () => ipcRenderer.send('toggle-always-on-top'),
   getAlwaysOnTop: () => ipcRenderer.invoke('get-always-on-top'),
   onAlwaysOnTopChanged: (cb) => {
+    ipcRenderer.removeAllListeners('always-on-top-changed');
     ipcRenderer.on('always-on-top-changed', (_e, val) => cb(val));
   },
 
@@ -31,9 +32,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveSettings: (s) => ipcRenderer.invoke('save-settings', s),
   applySettings: (s) => ipcRenderer.send('apply-settings', s),
   onToggleSettings: (cb) => {
+    ipcRenderer.removeAllListeners('toggle-settings');
     ipcRenderer.on('toggle-settings', () => cb());
   },
   onSettingsChanged: (cb) => {
+    ipcRenderer.removeAllListeners('settings-changed');
     ipcRenderer.on('settings-changed', (_e, val) => cb(val));
   },
 

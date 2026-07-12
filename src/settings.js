@@ -12,6 +12,10 @@ const DEFAULTS = {
   startupUrl: '',
   alwaysOnTop: false,
   showDiagnostics: false,
+  launchOnStartup: false,
+  allowMedia: true,
+  allowGeolocation: true,
+  allowNotifications: true,
 };
 
 let cache = null;
