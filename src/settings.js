@@ -18,6 +18,8 @@ const DEFAULTS = {
   allowNotifications: true,
   streamMode: 'h264',  // 'h264' | 'jpeg'
   hwEncoder: 'auto',   // 'auto' | 'nvenc' | 'qsv' | 'amf' | 'software'
+  audioEnabled: false, // include audio in H.264 stream via WASAPI loopback
+  audioDevice: '',     // WASAPI render device name (empty = system default)
 };
 
 let cache = null;

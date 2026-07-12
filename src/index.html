@@ -343,6 +343,38 @@
     #update-banner .update-download:hover { background: #f0b970; }
     #update-banner .update-dismiss { background: none; color: #666; font-size: 15px; padding: 0 4px; }
     #update-banner .update-dismiss:hover { color: #ccc; }
+    /* ── QR code popover ── */
+    #qr-popover {
+      display: none;
+      position: fixed;
+      bottom: 36px; right: 12px;
+      z-index: 300;
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    #qr-popover.visible { display: block; }
+    #qr-popover img { display: block; width: 160px; height: 160px; border-radius: 4px; }
+    #qr-popover .qr-label {
+      margin-top: 6px;
+      font-size: 10px;
+      color: #555;
+      text-align: center;
+      word-break: break-all;
+    }
+    #btn-qr {
+      padding: 2px 7px;
+      border: 1px solid #2a3a5c;
+      border-radius: 4px;
+      background: transparent;
+      color: #6ca0dc;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.4px;
+    }
+    #btn-qr:hover { background: rgba(108,160,220,0.12); border-color: #6ca0dc; }
   </style>
 </head>
 <body>
@@ -376,6 +408,13 @@
     <span id="viewer-count">0 viewers</span>
     <span class="spacer"></span>
     <a href="#" id="server-url" style="color:#6ca0dc;text-decoration:underline;cursor:pointer;">loading…</a>
+    <button id="btn-qr" title="Show QR code for viewer URL">QR</button>
+  </div>
+
+  <!-- QR code popover -->
+  <div id="qr-popover">
+    <img id="qr-img" alt="QR code" />
+    <div class="qr-label" id="qr-label"></div>
   </div>
 
   <!-- Diagnostics overlay -->
@@ -441,6 +480,19 @@
         <div class="s-field">
           <label>Encoder</label>
           <span id="s-encoder-label" style="font-size:12px;color:#aaa;flex:1">Detecting…</span>
+        </div>
+        <div class="s-field">
+          <label>Audio (H.264 only)</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-audio-enabled" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="s-field" id="s-audio-device-row" style="display:none">
+          <label for="s-audio-device">Audio device</label>
+          <select id="s-audio-device" style="flex:1;padding:7px 10px;border:1px solid #1e3460;border-radius:6px;background:#0f1928;color:#e0e6f0;font-size:12px;outline:none;cursor:pointer;">
+            <option value="">Loading…</option>
+          </select>
         </div>
       </div>
 
@@ -598,7 +650,55 @@
       allowGeo:      document.getElementById('s-allow-geo'),
       allowNotif:    document.getElementById('s-allow-notif'),
       streamMode:    document.getElementById('s-stream-mode'),
+      audioEnabled:  document.getElementById('s-audio-enabled'),
+      audioDevice:   document.getElementById('s-audio-device'),
     };
+
+    // Show/hide audio device row and populate device list
+    function setAudioDeviceRowVisible(visible) {
+      const row = document.getElementById('s-audio-device-row');
+      row.style.display = visible ? 'flex' : 'none';
+    }
+
+    async function populateAudioDevices(selectedDevice) {
+      const sel = sFields.audioDevice;
+      sel.innerHTML = '<option value="">Loading…</option>';
+      const devices = await api.listAudioDevices();
+      sel.innerHTML = '';
+      if (devices.length === 0) {
+        sel.innerHTML = '<option value="">(no output devices found)</option>';
+      } else {
+        for (const d of devices) {
+          const opt = document.createElement('option');
+          opt.value = d;
+          opt.textContent = d;
+          if (d === selectedDevice) opt.selected = true;
+          sel.appendChild(opt);
+        }
+        // If saved device not found, select first
+        if (!selectedDevice || !devices.includes(selectedDevice)) {
+          sel.value = devices[0];
+        }
+      }
+    }
+
+    sFields.audioEnabled.addEventListener('change', () => {
+      const on = sFields.audioEnabled.checked;
+      setAudioDeviceRowVisible(on);
+      if (on && sFields.audioDevice.options.length <= 1 && sFields.audioDevice.options[0]?.value === '') {
+        populateAudioDevices(sFields.audioDevice.value);
+      }
+    });
+
+    sFields.streamMode.addEventListener('change', () => {
+      // Disable audio toggle when JPEG mode is selected
+      const isH264 = sFields.streamMode.value === 'h264';
+      sFields.audioEnabled.disabled = !isH264;
+      if (!isH264) {
+        sFields.audioEnabled.checked = false;
+        setAudioDeviceRowVisible(false);
+      }
+    });
 
     function populateSettings(s) {
       sFields.port.value              = s.port;
@@ -613,6 +713,13 @@
       sFields.allowGeo.checked        = !!s.allowGeolocation;
       sFields.allowNotif.checked      = !!s.allowNotifications;
       sFields.streamMode.value        = s.streamMode || 'h264';
+      const isH264 = (s.streamMode || 'h264') === 'h264';
+      sFields.audioEnabled.disabled   = !isH264;
+      sFields.audioEnabled.checked    = !!s.audioEnabled && isH264;
+      setAudioDeviceRowVisible(!!s.audioEnabled && isH264);
+      if (s.audioEnabled && isH264) {
+        populateAudioDevices(s.audioDevice || '');
+      }
     }
 
     function collectSettings() {
@@ -629,6 +736,8 @@
         allowGeolocation:   sFields.allowGeo.checked,
         allowNotifications: sFields.allowNotif.checked,
         streamMode:         sFields.streamMode.value || 'h264',
+        audioEnabled:       sFields.audioEnabled.checked,
+        audioDevice:        sFields.audioDevice.value || '',
       };
     }
 
@@ -770,15 +879,44 @@
     }, 2000);
 
     /* ── Show server URL (clickable) ── */
+    let serverViewerUrl = '';
     Promise.all([api.getPort(), api.getLanIp()]).then(([port, lanIp]) => {
-      const url = 'http://' + lanIp + ':' + port + '/webshare';
-      serverUrlEl.textContent = url;
+      serverViewerUrl = 'http://' + lanIp + ':' + port + '/webshare';
+      serverUrlEl.textContent = serverViewerUrl;
       serverUrlEl.addEventListener('click', (e) => {
         e.preventDefault();
-        navigator.clipboard.writeText(url).catch(() => {});
-        api.openExternal(url);
+        navigator.clipboard.writeText(serverViewerUrl).catch(() => {});
+        api.openExternal(serverViewerUrl);
       });
       document.getElementById('diag-lan-ip').textContent = lanIp;
+    });
+
+    /* ── QR code popover ── */
+    const qrPopover = document.getElementById('qr-popover');
+    const btnQr     = document.getElementById('btn-qr');
+    let qrLoaded = false;
+
+    btnQr.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (qrPopover.classList.contains('visible')) {
+        qrPopover.classList.remove('visible');
+        return;
+      }
+      if (!qrLoaded) {
+        const dataUrl = await api.getQrCode();
+        if (dataUrl) {
+          document.getElementById('qr-img').src = dataUrl;
+          document.getElementById('qr-label').textContent = serverViewerUrl;
+          qrLoaded = true;
+        }
+      }
+      qrPopover.classList.add('visible');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!qrPopover.contains(e.target) && e.target !== btnQr) {
+        qrPopover.classList.remove('visible');
+      }
     });
 
     /* ── Diagnostics overlay ── */

@@ -5,7 +5,8 @@ const dgram = require('dgram');
 const https = require('https');
 const { createServer } = require('./server');
 const settings = require('./settings');
-const { detectCodec, spawnEncoder, MSE_CODEC_STRING } = require('./encoder');
+const { detectCodec, spawnEncoder, listAudioDevices, MSE_CODEC_STRING, MSE_CODEC_STRING_WITH_AUDIO } = require('./encoder');
+const QRCode = require('qrcode');
 
 // Fake fullscreen JS — injected into guest pages via executeJavaScript (bypasses CSP).
 // Replaces the Fullscreen API with a CSS-based visual fake so video fills the
@@ -166,6 +167,10 @@ function startH264CaptureLoop(wcId) {
   stopCapture();
   captureWebContentsId = wcId;
   const fps = currentCaptureFps || settings.get('captureFps');
+  const audioDevice = settings.get('audioEnabled') && settings.get('audioDevice')
+    ? settings.get('audioDevice')
+    : null;
+  const codecStr = audioDevice ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING;
   let capturing = false;
   let ffmpegWidth = 0;
   let ffmpegHeight = 0;
@@ -184,7 +189,7 @@ function startH264CaptureLoop(wcId) {
     ffmpegHeight = h;
     if (server) server.clearH264Init();
 
-    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps);
+    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps, audioDevice);
 
     // Drain stderr so the OS pipe buffer never fills and blocks ffmpeg
     ffmpegProc.stderr.on('data', (d) => console.error('[Encoder]', d.toString().trimEnd()));
@@ -257,8 +262,10 @@ function startH264CaptureLoop(wcId) {
 ipcMain.on('start-capture', (_event, webContentsId) => {
   if (webContentsId !== guestWebContentsId) return;
   const mode = settings.get('streamMode') || 'h264';
+  const audioDevice = settings.get('audioEnabled') && settings.get('audioDevice')
+    ? settings.get('audioDevice') : null;
   if (mode === 'h264' && encoderInfo) {
-    server.setMode('h264', MSE_CODEC_STRING);
+    server.setMode('h264', audioDevice ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING);
     startH264CaptureLoop(webContentsId);
   } else {
     server.setMode('jpeg', '');
@@ -368,6 +375,8 @@ function sanitizeSettings(s) {
     allowNotifications: !!s.allowNotifications,
     streamMode: ['h264', 'jpeg'].includes(s.streamMode) ? s.streamMode : 'h264',
     hwEncoder: ['auto', 'nvenc', 'qsv', 'amf', 'software'].includes(s.hwEncoder) ? s.hwEncoder : 'auto',
+    audioEnabled: !!s.audioEnabled,
+    audioDevice: typeof s.audioDevice === 'string' ? s.audioDevice.slice(0, 256) : '',
   };
 }
 
@@ -383,6 +392,21 @@ ipcMain.handle('save-settings', (_event, s) => {
 
 ipcMain.handle('get-encoder-info', () => encoderInfo || null);
 
+// ── IPC: list WASAPI audio devices for loopback capture ──
+ipcMain.handle('list-audio-devices', () => listAudioDevices());
+
+// ── IPC: generate QR code data URL for the viewer URL ──
+ipcMain.handle('get-qr-code', async () => {
+  const ip = await getLanIp();
+  const port = settings.get('port');
+  const url = `http://${ip}:${port}/webshare`;
+  try {
+    return await QRCode.toDataURL(url, { width: 200, margin: 2 });
+  } catch (_) {
+    return null;
+  }
+});
+
 ipcMain.on('apply-settings', (_event, s) => {
   // Apply live-changeable settings without restart (clamped to safe ranges)
   currentCaptureFps = Math.max(1, Math.min(60, parseInt(s.captureFps, 10) || 30));
@@ -391,8 +415,9 @@ ipcMain.on('apply-settings', (_event, s) => {
   // Restart capture in the correct mode if active
   if (captureWebContentsId != null) {
     const mode = s.streamMode || 'h264';
+    const audioDevice = s.audioEnabled && s.audioDevice ? s.audioDevice : null;
     if (mode === 'h264' && encoderInfo) {
-      server.setMode('h264', MSE_CODEC_STRING);
+      server.setMode('h264', audioDevice ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING);
       startH264CaptureLoop(captureWebContentsId);
     } else {
       server.setMode('jpeg', '');

@@ -59,4 +59,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('encoder-detected');
     ipcRenderer.on('encoder-detected', (_e, info) => cb(info));
   },
+
+  // Audio device listing (WASAPI loopback)
+  listAudioDevices: () => ipcRenderer.invoke('list-audio-devices'),
+
+  // QR code data URL for viewer URL
+  getQrCode: () => ipcRenderer.invoke('get-qr-code'),
 });

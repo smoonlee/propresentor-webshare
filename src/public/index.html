@@ -43,24 +43,46 @@
     }
     body:hover #btn-fs { opacity: 0.7; }
     #btn-fs:hover { opacity: 1 !important; background: rgba(255,255,255,0.25); }
+    #btn-unmute {
+      position: fixed;
+      bottom: 16px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      padding: 8px 18px;
+      border: none; border-radius: 6px;
+      background: rgba(255,255,255,0.18);
+      color: #fff;
+      font: 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      cursor: pointer;
+      display: none;
+    }
+    #btn-unmute:hover { background: rgba(255,255,255,0.30); }
   </style>
 </head>
 <body>
   <img    id="frame-jpeg" alt="Waiting for stream…" />
   <video  id="frame-h264" autoplay muted playsinline></video>
   <div id="overlay">Waiting for stream…</div>
+  <button id="btn-unmute" title="Enable audio">🔇 Tap to enable audio</button>
   <button id="btn-fs" title="Toggle fullscreen">⛶</button>
 
   <script>
-    const frameJpeg = document.getElementById('frame-jpeg');
-    const frameH264 = document.getElementById('frame-h264');
-    const overlay   = document.getElementById('overlay');
+    const frameJpeg  = document.getElementById('frame-jpeg');
+    const frameH264  = document.getElementById('frame-h264');
+    const overlay    = document.getElementById('overlay');
+    const btnUnmute  = document.getElementById('btn-unmute');
     let reconnectDelay = 1000;
     let mode = null;
     let mediaSource = null;
     let sourceBuffer = null;
     let pendingChunks = [];
     let fatalError = false;
+    let streamHasAudio = false;
+
+    btnUnmute.addEventListener('click', () => {
+      frameH264.muted = false;
+      btnUnmute.style.display = 'none';
+    });
 
     function connect() {
       if (fatalError) return;
@@ -104,6 +126,7 @@
         frameH264.style.display = 'none';
       } else if (cfg.mode === 'h264') {
         const mimeType = `video/mp4; codecs="${cfg.codec}"`;
+        streamHasAudio = cfg.codec.includes(','); // e.g. 'avc1.640028, mp4a.40.2'
         if (!window.MediaSource) {
           // Browser has no MSE at all — reconnecting will never help
           fatalError = true;
@@ -119,6 +142,7 @@
         }
         frameJpeg.style.display = 'none';
         frameH264.style.display = 'block';
+        frameH264.muted = !streamHasAudio; // unmute when stream contains audio
         setupMSE(mimeType);
         mode = 'h264'; // must be set AFTER setupMSE — teardownH264 inside resets mode to null
       }
@@ -138,7 +162,7 @@
       pendingChunks = [];
       mediaSource = new MediaSource();
       frameH264.src = URL.createObjectURL(mediaSource);
-      frameH264.play().catch(() => {});
+      // Play is initiated inside sourceopen so we can handle the unmute fallback
 
       mediaSource.addEventListener('sourceopen', () => {
         try {
@@ -148,6 +172,17 @@
           console.error('[WebShare] addSourceBuffer failed:', e);
           return;
         }
+
+        // Attempt unmuted play; fall back to muted + show unmute button if blocked
+        frameH264.play().then(() => {
+          if (streamHasAudio) btnUnmute.style.display = 'none';
+        }).catch(() => {
+          if (streamHasAudio) {
+            frameH264.muted = true;
+            frameH264.play().catch(() => {});
+            btnUnmute.style.display = 'block';
+          }
+        });
 
         sourceBuffer.addEventListener('updateend', () => {
           trimBuffer();
@@ -195,8 +230,10 @@
 
     function teardownH264() {
       mode = null;
+      streamHasAudio = false;
       pendingChunks = [];
       sourceBuffer = null;
+      btnUnmute.style.display = 'none';
       if (mediaSource && mediaSource.readyState === 'open') {
         try { mediaSource.endOfStream(); } catch (_) {}
       }

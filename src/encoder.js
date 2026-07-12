@@ -3,9 +3,11 @@
 const { execFile, spawn } = require('child_process');
 const { app } = require('electron');
 
-// MSE codec string — H.264 High Profile Level 4.0
+// MSE codec strings — H.264 High Profile Level 4.0
 // Matches the explicit -profile:v high -level 4.0 applied to every encoder below.
 const MSE_CODEC_STRING = 'avc1.640028';
+// With AAC-LC audio track (mp4a.40.2 = MPEG-4 AAC Low Complexity)
+const MSE_CODEC_STRING_WITH_AUDIO = 'avc1.640028, mp4a.40.2';
 
 function getFfmpegPath() {
   const base = require('ffmpeg-static');
@@ -88,8 +90,33 @@ function keyframeInterval(fps) {
   return Math.max(1, Math.ceil(fps / 10));
 }
 
-// Spawn an ffmpeg process: reads raw BGRA frames on stdin, outputs fragmented MP4 on stdout
-function spawnEncoder(codec, width, height, fps) {
+// List WASAPI render (output) devices available for loopback capture.
+// Loopback captures system audio playback from an output device.
+function listAudioDevices() {
+  const ffmpegPath = getFfmpegPath();
+  return new Promise((resolve) => {
+    execFile(ffmpegPath, ['-f', 'wasapi', '-list_devices', 'true', '-i', 'dummy'],
+      { timeout: 5000 },
+      (_err, _stdout, stderr) => {
+        const devices = [];
+        let inRender = false;
+        for (const line of (stderr || '').split('\n')) {
+          if (line.includes('WASAPI render devices')) { inRender = true; continue; }
+          if (line.includes('WASAPI capture devices')) { inRender = false; continue; }
+          if (inRender) {
+            const m = line.match(/"([^"@][^"]*)"/); // skip @device_cm_ alternative names
+            if (m) devices.push(m[1]);
+          }
+        }
+        resolve(devices);
+      }
+    );
+  });
+}
+
+// Spawn an ffmpeg process: reads raw BGRA frames on stdin, outputs fragmented MP4 on stdout.
+// When audioDevice is a non-empty string, adds a WASAPI loopback input before the video pipe.
+function spawnEncoder(codec, width, height, fps, audioDevice = null) {
   const ffmpegPath = getFfmpegPath();
   const kf = keyframeInterval(fps);
 
@@ -98,15 +125,29 @@ function spawnEncoder(codec, width, height, fps) {
     ? ['-keyint_min', String(kf), '-sc_threshold', '0']
     : [];
 
+  // When audio is requested, WASAPI render device (input 0) precedes the video pipe (input 1)
+  const audioInputArgs = audioDevice
+    ? ['-f', 'wasapi', '-thread_queue_size', '512', '-loopback', '-i', audioDevice]
+    : [];
+  const mapArgs = audioDevice
+    ? ['-map', '1:v:0', '-map', '0:a:0']
+    : [];
+  const audioOutputArgs = audioDevice
+    ? ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000']
+    : [];
+
   const args = [
     '-hide_banner', '-loglevel', 'error',   // suppress banner/progress; only real errors
+    ...audioInputArgs,
     '-f', 'rawvideo', '-pix_fmt', 'bgra',
     '-s', `${width}x${height}`,
     '-r', String(fps),
     '-i', 'pipe:0',
+    ...mapArgs,
     ...buildCodecArgs(codec),
     '-g', String(kf),
     ...x264Only,
+    ...audioOutputArgs,
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
     '-f', 'mp4',
     'pipe:1',
@@ -115,4 +156,4 @@ function spawnEncoder(codec, width, height, fps) {
   return spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
-module.exports = { detectCodec, spawnEncoder, MSE_CODEC_STRING };
+module.exports = { detectCodec, spawnEncoder, listAudioDevices, MSE_CODEC_STRING, MSE_CODEC_STRING_WITH_AUDIO };

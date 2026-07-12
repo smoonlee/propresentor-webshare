@@ -6,6 +6,13 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-12
+
+### Added
+
+- **Audio streaming (H.264 mode)** — the H.264 pipeline can now capture and mux system audio alongside video. Enable in Settings → Streaming → Audio, then select your Windows output device (WASAPI loopback). Viewers hear live audio in their browser; a "Tap to enable audio" button appears if the browser blocks autoplay with sound. Audio is disabled in JPEG mode.
+- **QR code** — a **QR** button in the status bar generates a scannable code for the viewer URL (`http://<LAN IP>:<port>/webshare`). Eliminates manual URL typing on phones and tablets.
+
 ## [1.5.3] - 2026-07-12
 
 ### Fixed
