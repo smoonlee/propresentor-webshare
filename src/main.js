@@ -69,7 +69,13 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
   // Check for updates 10 s after the window loads — no startup impact.
-  mainWindow.webContents.once('did-finish-load', () => setTimeout(checkForUpdates, 10000));
+  // If the check fails (e.g. VM network not yet ready), retry once after 60 s.
+  mainWindow.webContents.once('did-finish-load', () => {
+    setTimeout(async () => {
+      const result = await checkForUpdates();
+      if (result.networkError) setTimeout(checkForUpdates, 60000);
+    }, 10000);
+  });
 
   // Prevent the BrowserWindow from ever entering OS-level fullscreen
   mainWindow.setFullScreenable(false);
@@ -448,7 +454,7 @@ function checkForUpdates() {
       });
     });
     req.setTimeout(8000, () => req.destroy());
-    req.on('error', () => resolve({ available: false }));
+    req.on('error', () => resolve({ available: false, networkError: true }));
   });
 }
 

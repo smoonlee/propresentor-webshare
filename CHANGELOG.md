@@ -6,6 +6,12 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-12
+
+### Fixed
+
+- **Update check retry** — the automatic update check (10 s after launch) now retries once after 60 s when a network error occurs. This fixes the check silently failing on virtual machines where the network stack is not yet ready at startup.
+
 ## [1.5.0] - 2026-07-12
 
 ### Added
