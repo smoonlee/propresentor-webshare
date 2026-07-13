@@ -660,11 +660,15 @@
           audio: true,
           video: { width: 1, height: 1, frameRate: 1 },
         });
-        ms.getVideoTracks().forEach(t => t.stop()); // discard dummy video track
         const audioTrack = ms.getAudioTracks()[0];
         if (!audioTrack) { ms.getTracks().forEach(t => t.stop()); return; }
-        audioStream = new MediaStream([audioTrack]);
-        const recorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
+        // Do NOT stop the video tracks — on Windows the WASAPI loopback audio is
+        // tied to the desktop capture session.  Stopping the video track closes
+        // that session and immediately ends the audio track too.
+        // Using the full stream with an audio-only mimeType is safe; MediaRecorder
+        // ignores video tracks when the mimeType specifies audio/webm;codecs=opus.
+        audioStream = ms;
+        const recorder = new MediaRecorder(ms, { mimeType: 'audio/webm;codecs=opus' });
         recorder.ondataavailable = async (e) => {
           if (e.data.size > 0) {
             try { api.sendAudioChunk(await e.data.arrayBuffer()); } catch (_) {}
@@ -676,7 +680,8 @@
         };
         recorder.start(500); // 500 ms chunks
         audioMediaRecorder = recorder;
-      } catch (_) {
+      } catch (err) {
+        console.error('[Audio] startAudioCapture failed:', err);
         audioMediaRecorder = null;
         audioStream = null;
       }
