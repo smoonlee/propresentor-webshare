@@ -19,11 +19,27 @@ function createServer(port, bindAddress) {
   // HTTP chunked audio streaming — serves WebM/Opus directly to <audio> elements.
   // More compatible than WebSocket+MSE: the browser's native audio demuxer handles
   // the container format without needing explicit SourceBuffer management.
+  //
+  // NOTE: visiting this URL in a browser address bar will spin forever — that is
+  // correct.  The HTTP response intentionally never completes (it keeps streaming).
+  // The <audio> element handles this by buffering and playing as bytes arrive.
   let audioHttpClients = [];
   app.get('/webshare/audio', (req, res) => {
-    res.setHeader('Content-Type', 'audio/webm');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Accel-Buffering', 'no'); // disable nginx proxy buffering if present
+    // Browsers (Chrome/Edge) send Range requests for <audio> elements.  We don't
+    // support seeking into a live stream, so respond with 200 and Accept-Ranges:none
+    // to stop the browser retrying with a range request we can't satisfy.
+    res.writeHead(200, {
+      'Content-Type': 'audio/webm',
+      'Cache-Control': 'no-cache, no-store',
+      'Accept-Ranges': 'none',
+      'X-Accel-Buffering': 'no',  // disable nginx proxy buffering if present
+    });
+    // Send headers immediately even before the first audio chunk.  Without this,
+    // the browser gets no response bytes until write() is called, which may
+    // never happen if audio hasn't started yet — the connection appears to hang.
+    res.flushHeaders();
+    // Disable Nagle's algorithm so each write() reaches the client without delay.
+    if (req.socket) req.socket.setNoDelay(true);
     // Replay stored init segment so late-joining viewers can decode the stream.
     if (audioInitChunk) {
       try { res.write(Buffer.from(audioInitChunk)); } catch (_) {}
