@@ -108,10 +108,25 @@
           audioSourceBuffer.mode = 'sequence';
           console.log('[Audio] SourceBuffer created, MIME supported:', AUDIO_MIME);
         } catch (e) { console.error('[Audio] addSourceBuffer failed:', e); return; }
-        audioSourceBuffer.addEventListener('error', (ev) => console.error('[Audio] SourceBuffer error', ev));
+        audioSourceBuffer.addEventListener('error', () => {
+          // MSE SourceBuffer decode/quota error — the buffer is now unusable.
+          // Close the WebSocket so the onclose handler tears down MSE and
+          // reconnects, giving us a fresh SourceBuffer + new init segment.
+          console.warn('[Audio] SourceBuffer error — restarting audio pipeline');
+          if (wsAudio) { try { wsAudio.close(4001, 'sourcebuffer-error'); } catch (_) {} }
+        });
         audioSourceBuffer.addEventListener('abort', () => console.warn('[Audio] SourceBuffer aborted'));
         audioSourceBuffer.addEventListener('updateend', () => {
-          if (audioPendingChunks.length > 0 && !audioSourceBuffer.updating) {
+          if (!audioSourceBuffer || audioSourceBuffer.updating) return;
+          // Trim buffered audio older than 10 s behind playhead to avoid quota overflow.
+          // Do this in updateend (not updating) so we don't clash with an append.
+          if (frameAudio.currentTime > 10 && audioSourceBuffer.buffered.length > 0) {
+            const trimTo = frameAudio.currentTime - 8;
+            if (trimTo > audioSourceBuffer.buffered.start(0) + 1) {
+              try { audioSourceBuffer.remove(audioSourceBuffer.buffered.start(0), trimTo); return; } catch (_) {}
+            }
+          }
+          if (audioPendingChunks.length > 0) {
             try { audioSourceBuffer.appendBuffer(audioPendingChunks.shift()); } catch (_) {}
           }
         });
@@ -167,8 +182,8 @@
       wsAudio.onclose = (ev) => {
         console.log('[Audio] WebSocket /webshare/ws-audio closed, code:', ev.code, 'chunks received:', _wsAudioChunkCount);
         wsAudio = null; teardownAudio();
-        // code 1001 = server closed for stream-restart: reconnect quickly
-        if (ev.code === 1001) {
+        // code 1001 = server-side stream restart; 4001 = local SourceBuffer error
+        if (ev.code === 1001 || ev.code === 4001) {
           audioReconnectDelay = 1000;
         } else if (Date.now() - t0 < 1500) {
           audioReconnectDelay = Math.min(audioReconnectDelay * 2, 30000);
