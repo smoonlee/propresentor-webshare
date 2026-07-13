@@ -652,10 +652,12 @@
     // provides audio:'loopback' (Chromium WASAPI), so no ffmpeg WASAPI needed.
     let audioMediaRecorder = null;
     let audioStream = null;
+    let _audioCapturePending = false; // prevents concurrent getDisplayMedia calls
     let _audioChunkCount = 0;
 
     async function startAudioCapture() {
-      if (audioMediaRecorder) return;
+      if (audioMediaRecorder || _audioCapturePending) return;
+      _audioCapturePending = true;
       console.log('[Audio] startAudioCapture: calling getDisplayMedia');
       try {
         const ms = await navigator.mediaDevices.getDisplayMedia({
@@ -697,15 +699,18 @@
         };
         recorder.start(500); // 500 ms chunks
         console.log('[Audio] MediaRecorder started, state:', recorder.state);
+        _audioCapturePending = false;
         audioMediaRecorder = recorder;
       } catch (err) {
         console.error('[Audio] startAudioCapture failed:', err);
+        _audioCapturePending = false;
         audioMediaRecorder = null;
         audioStream = null;
       }
     }
 
     function stopAudioCapture() {
+      _audioCapturePending = false;
       if (audioMediaRecorder) {
         try { audioMediaRecorder.stop(); } catch (_) {}
         audioMediaRecorder = null;
