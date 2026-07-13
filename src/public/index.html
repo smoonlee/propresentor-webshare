@@ -93,11 +93,18 @@
 
     btnUnmute.addEventListener('click', () => {
       frameAudio.muted = false;
-      // Re-call play() in case it was silently rejected by the browser's autoplay
-      // policy before the user interacted.  A button click is always a valid user
-      // gesture, so play() will succeed here even if the earlier call (while the
-      // page was loading) was blocked.
-      frameAudio.play().catch(() => {});
+      // Seek to the live edge before playing.
+      // When a viewer joins a stream mid-session, the server replays the EBML
+      // init segment (timestamp = 0) but the live clusters arriving have
+      // timestamps of e.g. 5000 ms.  The <audio> element starts at currentTime=0
+      // and waits for data that never arrives there, producing permanent silence.
+      // Seeking to buffered.start(0) puts currentTime where data actually exists.
+      if (frameAudio.buffered.length > 0) {
+        try { frameAudio.currentTime = frameAudio.buffered.start(0); } catch (_) {}
+      }
+      frameAudio.play().catch(e => {
+        console.log('[Audio] play() rejected on unmute:', e && e.name, frameAudio.readyState, frameAudio.networkState);
+      });
       btnUnmute.style.display = 'none';
     });
 
@@ -134,6 +141,21 @@
         console.log('[Audio] error code=' + code);
         disconnect('error(code=' + code + ')');
       }, { once: true });
+      // If the element stalls (buffered data exists but currentTime is outside it),
+      // re-seek to the start of the buffered range to recover.
+      frameAudio.addEventListener('stalled', () => {
+        console.log('[Audio] stalled — buffered:', frameAudio.buffered.length,
+          frameAudio.buffered.length ? frameAudio.buffered.start(0)+'-'+frameAudio.buffered.end(0) : 'empty',
+          'currentTime:', frameAudio.currentTime);
+        if (frameAudio.buffered.length > 0) {
+          try { frameAudio.currentTime = frameAudio.buffered.start(0); } catch (_) {}
+        }
+      });
+      frameAudio.addEventListener('waiting', () => {
+        console.log('[Audio] waiting — buffered:', frameAudio.buffered.length,
+          frameAudio.buffered.length ? frameAudio.buffered.start(0)+'-'+frameAudio.buffered.end(0) : 'empty',
+          'currentTime:', frameAudio.currentTime);
+      });
 
       frameAudio.src = '/webshare/audio?t=' + Date.now();
       console.log('[Audio] Connecting via HTTP stream /webshare/audio');
