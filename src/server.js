@@ -42,7 +42,11 @@ function createServer(port, bindAddress) {
   let audioInitChunk = null; // First WebM chunk (EBML header) — replayed to every new audio viewer
 
   wssAudio.on('connection', (ws) => {
+    console.log(`[WebShare] Audio viewer connected (${wssAudio.clients.size} total)`);
     ws.on('error', () => {});
+    ws.on('close', () => {
+      console.log(`[WebShare] Audio viewer disconnected (${wssAudio.clients.size} total)`);
+    });
     // Replay the WebM init segment so viewers that connect after capture started
     // can still decode the stream.  Without it, the SourceBuffer rejects every
     // subsequent cluster and audio never plays.
@@ -110,8 +114,20 @@ function createServer(port, bindAddress) {
 
   // Store the WebM init segment (EBML header).  Called when the first chunk
   // of a new MediaRecorder session is detected.
+  // If a previous init segment already existed, the audio capture restarted.
+  // Existing audio viewers have the old WebM stream's EBML header in their
+  // MSE SourceBuffer — appending a new EBML header would throw InvalidStateError
+  // and silently break the SourceBuffer.  Close them so they reconnect fresh
+  // and receive the new stream from scratch.
   function setAudioInit(buf) {
+    const isRestart = audioInitChunk !== null;
     audioInitChunk = buf;
+    if (isRestart) {
+      console.log('[WebShare] Audio stream restarted — closing', wssAudio.clients.size, 'audio viewer(s) for clean reconnect');
+      for (const client of wssAudio.clients) {
+        try { client.close(1001, 'stream-restart'); } catch (_) {}
+      }
+    }
   }
 
   function clearAudioInit() {

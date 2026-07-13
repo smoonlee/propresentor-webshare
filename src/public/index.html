@@ -164,11 +164,17 @@
         else if (_wsAudioChunkCount % 20 === 0) console.log('[Audio] Browser WebSocket chunk count:', _wsAudioChunkCount);
         appendAudioChunk(new Uint8Array(e.data));
       };
-      wsAudio.onclose = () => {
-        console.log('[Audio] WebSocket /webshare/ws-audio closed, chunks received:', _wsAudioChunkCount);
+      wsAudio.onclose = (ev) => {
+        console.log('[Audio] WebSocket /webshare/ws-audio closed, code:', ev.code, 'chunks received:', _wsAudioChunkCount);
         wsAudio = null; teardownAudio();
-        if (Date.now() - t0 < 1500) audioReconnectDelay = Math.min(audioReconnectDelay * 2, 30000);
-        else audioReconnectDelay = 5000;
+        // code 1001 = server closed for stream-restart: reconnect quickly
+        if (ev.code === 1001) {
+          audioReconnectDelay = 1000;
+        } else if (Date.now() - t0 < 1500) {
+          audioReconnectDelay = Math.min(audioReconnectDelay * 2, 30000);
+        } else {
+          audioReconnectDelay = 5000;
+        }
         setTimeout(connectAudio, audioReconnectDelay);
       };
       wsAudio.onerror = () => wsAudio.close();
