@@ -39,8 +39,16 @@ function createServer(port, bindAddress) {
     }
   });
 
+  let audioInitChunk = null; // First WebM chunk (EBML header) — replayed to every new audio viewer
+
   wssAudio.on('connection', (ws) => {
     ws.on('error', () => {});
+    // Replay the WebM init segment so viewers that connect after capture started
+    // can still decode the stream.  Without it, the SourceBuffer rejects every
+    // subsequent cluster and audio never plays.
+    if (audioInitChunk) {
+      try { ws.send(audioInitChunk); } catch (_) {}
+    }
   });
 
   let lastFrame = null;
@@ -98,6 +106,16 @@ function createServer(port, bindAddress) {
         try { client.send(chunk); } catch (_) {}
       }
     }
+  }
+
+  // Store the WebM init segment (EBML header).  Called when the first chunk
+  // of a new MediaRecorder session is detected.
+  function setAudioInit(buf) {
+    audioInitChunk = buf;
+  }
+
+  function clearAudioInit() {
+    audioInitChunk = null;
   }
 
   // Broadcast a WebM/Opus audio chunk to all connected audio viewers
@@ -167,6 +185,8 @@ function createServer(port, bindAddress) {
     broadcastFrame,
     broadcastChunk,
     broadcastAudioChunk,
+    setAudioInit,
+    clearAudioInit,
     clearLastFrame,
     setMode,
     setH264Init,

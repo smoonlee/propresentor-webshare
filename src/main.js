@@ -392,7 +392,17 @@ ipcMain.handle('get-encoder-info', () => encoderInfo || null);
 
 // ── IPC: relay audio chunks (WebM/Opus) from renderer to WebSocket clients ──
 ipcMain.on('audio-chunk', (_event, buffer) => {
-  if (server) server.broadcastAudioChunk(buffer);
+  if (!server) return;
+  // WebM streams begin with an EBML header (magic bytes 1A 45 DF A3).
+  // The first ondataavailable chunk from MediaRecorder always contains it.
+  // Store it so late-joining audio viewers receive the header first and
+  // can decode subsequent clusters — same pattern as the H.264 init segment.
+  if (Buffer.isBuffer(buffer) && buffer.length >= 4 &&
+      buffer[0] === 0x1A && buffer[1] === 0x45 &&
+      buffer[2] === 0xDF && buffer[3] === 0xA3) {
+    server.setAudioInit(buffer);
+  }
+  server.broadcastAudioChunk(buffer);
 });
 
 // ── IPC: generate QR code data URL for the viewer URL ──
