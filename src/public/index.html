@@ -93,6 +93,11 @@
 
     btnUnmute.addEventListener('click', () => {
       frameAudio.muted = false;
+      // Re-call play() in case it was silently rejected by the browser's autoplay
+      // policy before the user interacted.  A button click is always a valid user
+      // gesture, so play() will succeed here even if the earlier call (while the
+      // page was loading) was blocked.
+      frameAudio.play().catch(() => {});
       btnUnmute.style.display = 'none';
     });
 
