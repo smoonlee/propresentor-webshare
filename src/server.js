@@ -16,25 +16,27 @@ function createServer(port, bindAddress) {
   // Serve the webshare viewer page
   app.use('/webshare', express.static(path.join(__dirname, 'public')));
 
-  // WebSocket for streaming live frames to viewers
-  const wss = new WebSocketServer({ server: httpServer, path: '/webshare/ws' });
-
-  // Audio loopback stream (WebM/Opus chunks).
-  // Use noServer so ws does not register its own 'upgrade' listener — having
-  // two path-filtered WebSocketServers on the same http.Server causes the
-  // second one to call abortHandshake(400) for paths it doesn't own, which
-  // destroys the socket that the first server is already handling.
+  // Both WebSocket servers use noServer:true so neither registers its own
+  // 'upgrade' listener.  A single manual router dispatches by path.
+  // Using { server, path } on either server causes it to call
+  // abortHandshake(400) for unmatched paths, destroying sockets the other
+  // server was about to claim — even if the other server was registered first.
+  const wss = new WebSocketServer({ noServer: true });
   const wssAudio = new WebSocketServer({ noServer: true });
 
-  // Route /webshare/ws-audio upgrades to wssAudio manually.
   httpServer.on('upgrade', (req, socket, head) => {
     const url = req.url ? req.url.split('?')[0] : '';
-    if (url === '/webshare/ws-audio') {
+    if (url === '/webshare/ws') {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req);
+      });
+    } else if (url === '/webshare/ws-audio') {
       wssAudio.handleUpgrade(req, socket, head, (ws) => {
         wssAudio.emit('connection', ws, req);
       });
+    } else {
+      socket.destroy();
     }
-    // All other paths fall through to wss (which is registered with path:'/webshare/ws')
   });
 
   wssAudio.on('connection', (ws) => {
