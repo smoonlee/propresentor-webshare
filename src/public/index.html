@@ -113,13 +113,20 @@
       }
 
       frameAudio.muted = true;
-      frameAudio.addEventListener('canplay', () => {
-        console.log('[Audio] HTTP stream buffering — showing unmute button');
+      // Show the unmute button as soon as the stream is usable.
+      // canplay may never fire on mobile for live streams with unknown duration.
+      // loadedmetadata fires as soon as the WebM init segment is parsed — reliable
+      // on Edge Android.  Whichever fires first wins; the second call is harmless.
+      const showUnmute = () => {
+        console.log('[Audio] Stream ready — showing unmute button');
         btnUnmute.style.display = 'block';
-      }, { once: true });
+      };
+      frameAudio.addEventListener('loadedmetadata', showUnmute, { once: true });
+      frameAudio.addEventListener('canplay',         showUnmute, { once: true });
       frameAudio.addEventListener('ended', () => disconnect('ended'), { once: true });
       frameAudio.addEventListener('error', () => {
         const code = frameAudio.error ? frameAudio.error.code : '?';
+        console.log('[Audio] error code=' + code);
         disconnect('error(code=' + code + ')');
       }, { once: true });
 
