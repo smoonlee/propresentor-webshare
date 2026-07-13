@@ -397,7 +397,9 @@ ipcMain.on('audio-chunk', (_event, buffer) => {
   // The first ondataavailable chunk from MediaRecorder always contains it.
   // Store it so late-joining audio viewers receive the header first and
   // can decode subsequent clusters — same pattern as the H.264 init segment.
-  if (Buffer.isBuffer(buffer) && buffer.length >= 4 &&
+  // Use plain index access (works for Buffer AND Uint8Array — Electron IPC
+  // may deliver the ArrayBuffer as either type depending on version).
+  if (buffer && buffer.length >= 4 &&
       buffer[0] === 0x1A && buffer[1] === 0x45 &&
       buffer[2] === 0xDF && buffer[3] === 0xA3) {
     server.setAudioInit(buffer);
