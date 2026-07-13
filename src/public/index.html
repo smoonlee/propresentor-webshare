@@ -62,6 +62,7 @@
 <body>
   <img    id="frame-jpeg" alt="Waiting for stream…" />
   <video  id="frame-h264" autoplay muted playsinline></video>
+  <audio  id="frame-audio" style="display:none" playsinline></audio>
   <div id="overlay">Waiting for stream…</div>
   <button id="btn-unmute" title="Enable audio">🔇 Tap to enable audio</button>
   <button id="btn-fs" title="Toggle fullscreen">⛶</button>
@@ -69,6 +70,7 @@
   <script>
     const frameJpeg  = document.getElementById('frame-jpeg');
     const frameH264  = document.getElementById('frame-h264');
+    const frameAudio = document.getElementById('frame-audio');
     const overlay    = document.getElementById('overlay');
     const btnUnmute  = document.getElementById('btn-unmute');
     let reconnectDelay = 1000;
@@ -77,13 +79,90 @@
     let sourceBuffer = null;
     let pendingChunks = [];
     let fatalError = false;
-    let streamHasAudio = false;
+
+    // ── Audio loopback (WebM/Opus via /webshare/ws-audio) ────────────────────
+    const AUDIO_MIME = 'audio/webm;codecs=opus';
+    const audioSupported = !!(window.MediaSource && MediaSource.isTypeSupported(AUDIO_MIME));
+    let wsAudio = null;
+    let audioMediaSource = null;
+    let audioSourceBuffer = null;
+    let audioPendingChunks = [];
+    let audioHasData = false;
+    let audioReconnectDelay = 5000;
 
     btnUnmute.addEventListener('click', () => {
-      frameH264.muted = false;
+      frameAudio.muted = false;
+      frameAudio.play().catch(() => {});
       btnUnmute.style.display = 'none';
     });
 
+    function setupAudioMSE() {
+      teardownAudio();
+      if (!audioSupported) return;
+      audioMediaSource = new MediaSource();
+      frameAudio.src = URL.createObjectURL(audioMediaSource);
+      audioMediaSource.addEventListener('sourceopen', () => {
+        try {
+          audioSourceBuffer = audioMediaSource.addSourceBuffer(AUDIO_MIME);
+          audioSourceBuffer.mode = 'sequence';
+        } catch (_) { return; }
+        audioSourceBuffer.addEventListener('updateend', () => {
+          if (audioPendingChunks.length > 0 && !audioSourceBuffer.updating) {
+            try { audioSourceBuffer.appendBuffer(audioPendingChunks.shift()); } catch (_) {}
+          }
+        });
+        if (audioPendingChunks.length > 0 && !audioSourceBuffer.updating) {
+          try { audioSourceBuffer.appendBuffer(audioPendingChunks.shift()); } catch (_) {}
+        }
+        frameAudio.muted = true; // start muted until user taps button
+        frameAudio.play().catch(() => {});
+      }, { once: true });
+    }
+
+    function appendAudioChunk(data) {
+      if (!audioSourceBuffer || !audioMediaSource || audioMediaSource.readyState !== 'open') {
+        if (audioPendingChunks.length < 30) audioPendingChunks.push(data);
+        return;
+      }
+      if (!audioHasData) {
+        audioHasData = true;
+        btnUnmute.style.display = 'block'; // first chunk: show unmute button
+      }
+      if (audioSourceBuffer.updating) { audioPendingChunks.push(data); return; }
+      try { audioSourceBuffer.appendBuffer(data); }
+      catch (_) { audioPendingChunks = []; }
+    }
+
+    function teardownAudio() {
+      audioHasData = false;
+      audioPendingChunks = [];
+      audioSourceBuffer = null;
+      btnUnmute.style.display = 'none';
+      if (audioMediaSource && audioMediaSource.readyState === 'open') {
+        try { audioMediaSource.endOfStream(); } catch (_) {}
+      }
+      audioMediaSource = null;
+      if (frameAudio.src) { const old = frameAudio.src; frameAudio.src = ''; try { URL.revokeObjectURL(old); } catch (_) {} }
+    }
+
+    function connectAudio() {
+      if (!audioSupported || wsAudio) return;
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      wsAudio = new WebSocket(`${proto}://${location.host}/webshare/ws-audio`);
+      wsAudio.binaryType = 'arraybuffer';
+      const t0 = Date.now();
+      wsAudio.onopen = () => { audioReconnectDelay = 5000; setupAudioMSE(); };
+      wsAudio.onmessage = (e) => { if (e.data instanceof ArrayBuffer) appendAudioChunk(new Uint8Array(e.data)); };
+      wsAudio.onclose = () => {
+        wsAudio = null; teardownAudio();
+        if (Date.now() - t0 < 1500) audioReconnectDelay = Math.min(audioReconnectDelay * 2, 30000);
+        else audioReconnectDelay = 5000;
+        setTimeout(connectAudio, audioReconnectDelay);
+      };
+      wsAudio.onerror = () => wsAudio.close();
+    }
+
+    // ── Video stream (H.264 fragmented MP4 / JPEG via /webshare/ws) ──────────
     function connect() {
       if (fatalError) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -126,41 +205,23 @@
         frameH264.style.display = 'none';
       } else if (cfg.mode === 'h264') {
         if (!window.MediaSource) {
-          // Browser has no MSE at all — reconnecting will never help
           fatalError = true;
           overlay.textContent = 'Media Source Extensions are not supported in this browser. Ask the host to enable JPEG mode in Settings.';
           ws.close();
           return;
         }
-        // Determine which codec to use. If the server sends audio+video (e.g. 'avc1.640028, mp4a.40.2')
-        // but the browser does not support it (common on iOS / older Android), fall back to video-only.
-        let codec = cfg.codec;
-        streamHasAudio = cfg.codec.includes(',');
-        let mimeType = `video/mp4; codecs="${codec}"`;
+        // Video is always video-only. If server sends a combined codec (older build),
+        // strip the audio part — audio comes on the separate /webshare/ws-audio socket.
+        const videoCodec = (cfg.codec || 'avc1.640028').split(',')[0].trim();
+        const mimeType = `video/mp4; codecs="${videoCodec}"`;
         if (!MediaSource.isTypeSupported(mimeType)) {
-          if (streamHasAudio) {
-            // Try stripping the audio codec — maybe the browser supports video-only MSE
-            const videoCodec = cfg.codec.split(',')[0].trim();
-            const videoMime  = `video/mp4; codecs="${videoCodec}"`;
-            if (MediaSource.isTypeSupported(videoMime)) {
-              codec = videoCodec;
-              mimeType = videoMime;
-              streamHasAudio = false; // audio won't be in the decoded stream
-            } else {
-              overlay.textContent = 'H.264 streaming is not supported in this browser. Ask the host to enable JPEG mode in Settings.';
-              ws.close();
-              return;
-            }
-          } else {
-            // Codec unsupported in this browser, but server may switch to JPEG — allow reconnect
-            overlay.textContent = 'H.264 streaming is not supported in this browser. Ask the host to enable JPEG mode in Settings.';
-            ws.close();
-            return;
-          }
+          overlay.textContent = 'H.264 streaming is not supported in this browser. Ask the host to enable JPEG mode in Settings.';
+          ws.close();
+          return;
         }
         frameJpeg.style.display = 'none';
         frameH264.style.display = 'block';
-        frameH264.muted = !streamHasAudio; // unmute when stream contains audio
+        frameH264.muted = true; // video is always silent; audio is on frameAudio
         setupMSE(mimeType);
         mode = 'h264'; // must be set AFTER setupMSE — teardownH264 inside resets mode to null
       }
@@ -180,7 +241,6 @@
       pendingChunks = [];
       mediaSource = new MediaSource();
       frameH264.src = URL.createObjectURL(mediaSource);
-      // Play is initiated inside sourceopen so we can handle the unmute fallback
 
       mediaSource.addEventListener('sourceopen', () => {
         try {
@@ -191,27 +251,16 @@
           return;
         }
 
-        // Attempt unmuted play; fall back to muted + show unmute button if blocked
-        frameH264.play().then(() => {
-          if (streamHasAudio) btnUnmute.style.display = 'none';
-        }).catch(() => {
-          if (streamHasAudio) {
-            frameH264.muted = true;
-            frameH264.play().catch(() => {});
-            btnUnmute.style.display = 'block';
-          }
-        });
+        frameH264.play().catch(() => {}); // muted video always allowed to autoplay
 
         sourceBuffer.addEventListener('updateend', () => {
           trimBuffer();
-          // Drain any queued chunks
           if (pendingChunks.length > 0 && !sourceBuffer.updating) {
             try { sourceBuffer.appendBuffer(pendingChunks.shift()); } catch (_) {}
           }
           overlay.classList.add('hidden');
         });
 
-        // Drain anything that arrived before sourceopen
         if (pendingChunks.length > 0 && !sourceBuffer.updating) {
           try { sourceBuffer.appendBuffer(pendingChunks.shift()); } catch (_) {}
         }
@@ -220,20 +269,15 @@
 
     function appendH264Chunk(chunk) {
       if (!sourceBuffer || !mediaSource || mediaSource.readyState !== 'open') {
-        // Cap the queue to ~4 s worth of frames (120 @ 30 fps) so we don't
-        // accumulate stale content when the SourceBuffer is slow to open.
         if (pendingChunks.length >= 120) pendingChunks.shift();
         pendingChunks.push(chunk);
         return;
       }
-      if (sourceBuffer.updating) {
-        pendingChunks.push(chunk);
-        return;
-      }
+      if (sourceBuffer.updating) { pendingChunks.push(chunk); return; }
       try {
         sourceBuffer.appendBuffer(chunk);
       } catch (_) {
-        pendingChunks = []; // clear on error (e.g. QuotaExceededError)
+        pendingChunks = [];
       }
     }
 
@@ -248,10 +292,8 @@
 
     function teardownH264() {
       mode = null;
-      streamHasAudio = false;
       pendingChunks = [];
       sourceBuffer = null;
-      btnUnmute.style.display = 'none';
       if (mediaSource && mediaSource.readyState === 'open') {
         try { mediaSource.endOfStream(); } catch (_) {}
       }
@@ -264,6 +306,7 @@
     }
 
     connect();
+    connectAudio();
 
     // Fullscreen toggle
     document.getElementById('btn-fs').addEventListener('click', () => {

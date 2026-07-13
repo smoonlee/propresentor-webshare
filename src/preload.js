@@ -60,8 +60,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('encoder-detected', (_e, info) => cb(info));
   },
 
-  // Audio device listing (WASAPI loopback)
-  listAudioDevices: () => ipcRenderer.invoke('list-audio-devices'),
+  // Send a WebM/Opus audio chunk captured in the renderer to the main process
+  sendAudioChunk: (data) => ipcRenderer.send('audio-chunk', data),
 
   // QR code data URL for viewer URL
   getQrCode: () => ipcRenderer.invoke('get-qr-code'),

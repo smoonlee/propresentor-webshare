@@ -1,11 +1,11 @@
-const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, webContents, session, dialog } = require('electron');
+const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, webContents, session, desktopCapturer, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const dgram = require('dgram');
 const https = require('https');
 const { createServer } = require('./server');
 const settings = require('./settings');
-const { detectCodec, spawnEncoder, listAudioDevices, MSE_CODEC_STRING, MSE_CODEC_STRING_WITH_AUDIO } = require('./encoder');
+const { detectCodec, spawnEncoder, MSE_CODEC_STRING } = require('./encoder');
 const QRCode = require('qrcode');
 
 // Fake fullscreen JS — injected into guest pages via executeJavaScript (bypasses CSP).
@@ -167,10 +167,6 @@ function startH264CaptureLoop(wcId) {
   stopCapture();
   captureWebContentsId = wcId;
   const fps = currentCaptureFps || settings.get('captureFps');
-  const audioDevice = settings.get('audioEnabled')
-    ? (settings.get('audioDevice') || '')
-    : null;
-  const codecStr = audioDevice !== null ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING;
   let capturing = false;
   let ffmpegWidth = 0;
   let ffmpegHeight = 0;
@@ -189,7 +185,7 @@ function startH264CaptureLoop(wcId) {
     ffmpegHeight = h;
     if (server) server.clearH264Init();
 
-    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps, audioDevice);
+    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps);
 
     // Suppress write EOF errors on stdin — emitted asynchronously when ffmpeg
     // exits while the capture loop is still writing frames to the pipe.
@@ -267,11 +263,8 @@ function startH264CaptureLoop(wcId) {
 ipcMain.on('start-capture', (_event, webContentsId) => {
   if (webContentsId !== guestWebContentsId) return;
   const mode = settings.get('streamMode') || 'h264';
-  const audioDevice = settings.get('audioEnabled')
-    ? (settings.get('audioDevice') || '')
-    : null;
   if (mode === 'h264' && encoderInfo) {
-    server.setMode('h264', audioDevice !== null ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING);
+    server.setMode('h264', MSE_CODEC_STRING);
     startH264CaptureLoop(webContentsId);
   } else {
     server.setMode('jpeg', '');
@@ -382,7 +375,6 @@ function sanitizeSettings(s) {
     streamMode: ['h264', 'jpeg'].includes(s.streamMode) ? s.streamMode : 'h264',
     hwEncoder: ['auto', 'nvenc', 'qsv', 'amf', 'software'].includes(s.hwEncoder) ? s.hwEncoder : 'auto',
     audioEnabled: !!s.audioEnabled,
-    audioDevice: typeof s.audioDevice === 'string' ? s.audioDevice.slice(0, 256) : '',
   };
 }
 
@@ -398,8 +390,10 @@ ipcMain.handle('save-settings', (_event, s) => {
 
 ipcMain.handle('get-encoder-info', () => encoderInfo || null);
 
-// ── IPC: list WASAPI audio devices for loopback capture ──
-ipcMain.handle('list-audio-devices', () => listAudioDevices());
+// ── IPC: relay audio chunks (WebM/Opus) from renderer to WebSocket clients ──
+ipcMain.on('audio-chunk', (_event, buffer) => {
+  if (server) server.broadcastAudioChunk(buffer);
+});
 
 // ── IPC: generate QR code data URL for the viewer URL ──
 ipcMain.handle('get-qr-code', async () => {
@@ -421,9 +415,8 @@ ipcMain.on('apply-settings', (_event, s) => {
   // Restart capture in the correct mode if active
   if (captureWebContentsId != null) {
     const mode = s.streamMode || 'h264';
-    const audioDevice = s.audioEnabled ? (s.audioDevice !== undefined ? s.audioDevice : '') : null;
     if (mode === 'h264' && encoderInfo) {
-      server.setMode('h264', audioDevice !== null ? MSE_CODEC_STRING_WITH_AUDIO : MSE_CODEC_STRING);
+      server.setMode('h264', MSE_CODEC_STRING);
       startH264CaptureLoop(captureWebContentsId);
     } else {
       server.setMode('jpeg', '');
@@ -502,6 +495,15 @@ app.whenReady().then(() => {
   if (app.isPackaged) {
     app.setLoginItemSettings({ openAtLogin: cfg.launchOnStartup });
   }
+
+  // Intercept getDisplayMedia() calls from the renderer and provide a desktop
+  // source + Windows WASAPI loopback audio, bypassing the system picker dialog.
+  // audio: 'loopback' uses Chromium's built-in WASAPI stack — no ffmpeg needed.
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      callback({ video: sources[0], audio: 'loopback' });
+    }).catch(() => callback({}));
+  }, { useSystemPicker: false });
   server = createServer(cfg.port, cfg.bindAddress);
   server.ready.catch((err) => {
     dialog.showErrorBox('Server failed to start', err.message);

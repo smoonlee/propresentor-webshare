@@ -19,6 +19,28 @@ function createServer(port, bindAddress) {
   // WebSocket for streaming live frames to viewers
   const wss = new WebSocketServer({ server: httpServer, path: '/webshare/ws' });
 
+  // Audio loopback stream (WebM/Opus chunks).
+  // Use noServer so ws does not register its own 'upgrade' listener — having
+  // two path-filtered WebSocketServers on the same http.Server causes the
+  // second one to call abortHandshake(400) for paths it doesn't own, which
+  // destroys the socket that the first server is already handling.
+  const wssAudio = new WebSocketServer({ noServer: true });
+
+  // Route /webshare/ws-audio upgrades to wssAudio manually.
+  httpServer.on('upgrade', (req, socket, head) => {
+    const url = req.url ? req.url.split('?')[0] : '';
+    if (url === '/webshare/ws-audio') {
+      wssAudio.handleUpgrade(req, socket, head, (ws) => {
+        wssAudio.emit('connection', ws, req);
+      });
+    }
+    // All other paths fall through to wss (which is registered with path:'/webshare/ws')
+  });
+
+  wssAudio.on('connection', (ws) => {
+    ws.on('error', () => {});
+  });
+
   let lastFrame = null;
   let currentMode = 'jpeg';
   let currentCodecStr = '';
@@ -70,6 +92,16 @@ function createServer(port, bindAddress) {
   function broadcastChunk(chunk) {
     if (wss.clients.size === 0) return;
     for (const client of wss.clients) {
+      if (client.readyState === 1 && client.bufferedAmount < MAX_BUFFERED) {
+        try { client.send(chunk); } catch (_) {}
+      }
+    }
+  }
+
+  // Broadcast a WebM/Opus audio chunk to all connected audio viewers
+  function broadcastAudioChunk(chunk) {
+    if (wssAudio.clients.size === 0) return;
+    for (const client of wssAudio.clients) {
       if (client.readyState === 1 && client.bufferedAmount < MAX_BUFFERED) {
         try { client.send(chunk); } catch (_) {}
       }
@@ -132,6 +164,7 @@ function createServer(port, bindAddress) {
   return {
     broadcastFrame,
     broadcastChunk,
+    broadcastAudioChunk,
     clearLastFrame,
     setMode,
     setH264Init,
@@ -141,7 +174,9 @@ function createServer(port, bindAddress) {
     address: () => httpServer.address(),
     close: () => {
       for (const client of wss.clients) client.terminate();
+      for (const client of wssAudio.clients) client.terminate();
       wss.close();
+      wssAudio.close();
       httpServer.close();
     },
   };

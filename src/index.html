@@ -482,23 +482,11 @@
           <span id="s-encoder-label" style="font-size:12px;color:#aaa;flex:1">Detecting…</span>
         </div>
         <div class="s-field">
-          <label>Audio (H.264 only)</label>
+          <label>Audio loopback (H.264 only)</label>
           <label class="s-toggle">
             <input type="checkbox" id="s-audio-enabled" />
             <span class="slider"></span>
           </label>
-        </div>
-        <div class="s-field" id="s-audio-device-row" style="display:none">
-          <label for="s-audio-device">Audio device</label>
-          <select id="s-audio-device" style="flex:1;padding:7px 10px;border:1px solid #1e3460;border-radius:6px;background:#0f1928;color:#e0e6f0;font-size:12px;outline:none;cursor:pointer;">
-            <option value="">Loading…</option>
-          </select>
-        </div>
-        <div id="s-audio-note" style="display:none;padding:6px 16px 0 16px;font-size:11px;color:#f0a840;line-height:1.4">
-          ⚠ System audio loopback requires the full ffmpeg build (WASAPI). dshow devices listed
-          are input-only (microphone). To enable loopback: install ffmpeg via
-          <code style="background:#1b2a40;padding:1px 4px;border-radius:3px">winget install Gyan.FFmpeg</code>
-          or enable Stereo Mix in Windows Sound settings.
         </div>
       </div>
 
@@ -657,84 +645,64 @@
       allowNotif:    document.getElementById('s-allow-notif'),
       streamMode:    document.getElementById('s-stream-mode'),
       audioEnabled:  document.getElementById('s-audio-enabled'),
-      audioDevice:   document.getElementById('s-audio-device'),
     };
 
-    // Show/hide audio device row and populate device list
-    function setAudioDeviceRowVisible(visible) {
-      const row = document.getElementById('s-audio-device-row');
-      row.style.display = visible ? 'flex' : 'none';
-      // The s-audio-note is revealed by populateAudioDevices when WASAPI is unavailable.
-      // When hiding the row, always hide the note too.
-      if (!visible) {
-        const note = document.getElementById('s-audio-note');
-        if (note) note.style.display = 'none';
+    // ── Native audio capture via Electron getDisplayMedia loopback ──
+    // The main process setDisplayMediaRequestHandler intercepts this call and
+    // provides audio:'loopback' (Chromium WASAPI), so no ffmpeg WASAPI needed.
+    let audioMediaRecorder = null;
+    let audioStream = null;
+
+    async function startAudioCapture() {
+      if (audioMediaRecorder) return;
+      try {
+        const ms = await navigator.mediaDevices.getDisplayMedia({
+          audio: true,
+          video: { width: 1, height: 1, frameRate: 1 },
+        });
+        ms.getVideoTracks().forEach(t => t.stop()); // discard dummy video track
+        const audioTrack = ms.getAudioTracks()[0];
+        if (!audioTrack) { ms.getTracks().forEach(t => t.stop()); return; }
+        audioStream = new MediaStream([audioTrack]);
+        const recorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
+        recorder.ondataavailable = async (e) => {
+          if (e.data.size > 0) {
+            try { api.sendAudioChunk(await e.data.arrayBuffer()); } catch (_) {}
+          }
+        };
+        recorder.onstop = recorder.onerror = () => {
+          audioMediaRecorder = null;
+          if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+        };
+        recorder.start(500); // 500 ms chunks
+        audioMediaRecorder = recorder;
+      } catch (_) {
+        audioMediaRecorder = null;
+        audioStream = null;
       }
     }
 
-    async function populateAudioDevices(selectedDevice) {
-      const sel = sFields.audioDevice;
-      const note = document.getElementById('s-audio-note');
-      sel.innerHTML = '';
-
-      try {
-        const result = await api.listAudioDevices();
-
-        if (result.wasapiAvailable) {
-          // Full ffmpeg build — WASAPI loopback of the default Windows playback device is always available.
-          const defOpt = document.createElement('option');
-          defOpt.value = '';
-          defOpt.textContent = 'System audio (default loopback)';
-          sel.appendChild(defOpt);
-          if (note) note.style.display = 'none';
-        } else {
-          // Essentials ffmpeg build — no WASAPI, show a helper note.
-          if (note) note.style.display = '';
-        }
-
-        // Append enumerated devices (WASAPI named devices, or dshow devices)
-        for (const d of result.devices) {
-          const opt = document.createElement('option');
-          opt.value = d;
-          opt.textContent = d.startsWith('dshow:') ? d.slice(6) : d;
-          sel.appendChild(opt);
-        }
-
-        if (sel.options.length === 0) {
-          const noOpt = document.createElement('option');
-          noOpt.value = '';
-          noOpt.textContent = '(no audio capture devices found)';
-          sel.appendChild(noOpt);
-        }
-
-      } catch (_) {
-        // Fallback: assume WASAPI default is available
-        const defOpt = document.createElement('option');
-        defOpt.value = '';
-        defOpt.textContent = 'System audio (default loopback)';
-        sel.appendChild(defOpt);
+    function stopAudioCapture() {
+      if (audioMediaRecorder) {
+        try { audioMediaRecorder.stop(); } catch (_) {}
+        audioMediaRecorder = null;
       }
-
-      // Restore saved selection
-      const match = [...sel.options].find(o => o.value === (selectedDevice || ''));
-      sel.value = match ? match.value : (sel.options[0]?.value ?? '');
+      if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
     }
 
     sFields.audioEnabled.addEventListener('change', () => {
       const on = sFields.audioEnabled.checked;
-      setAudioDeviceRowVisible(on);
-      if (on && sFields.audioDevice.options.length <= 1 && sFields.audioDevice.options[0]?.value === '') {
-        populateAudioDevices(sFields.audioDevice.value);
-      }
+      if (!on) stopAudioCapture();
+      // Audio capture is started when the stream begins (dom-ready), not here,
+      // so toggling ON only takes effect after the next settings save + reconnect.
     });
 
     sFields.streamMode.addEventListener('change', () => {
-      // Disable audio toggle when JPEG mode is selected
       const isH264 = sFields.streamMode.value === 'h264';
       sFields.audioEnabled.disabled = !isH264;
       if (!isH264) {
         sFields.audioEnabled.checked = false;
-        setAudioDeviceRowVisible(false);
+        stopAudioCapture();
       }
     });
 
@@ -754,10 +722,6 @@
       const isH264 = (s.streamMode || 'h264') === 'h264';
       sFields.audioEnabled.disabled   = !isH264;
       sFields.audioEnabled.checked    = !!s.audioEnabled && isH264;
-      setAudioDeviceRowVisible(!!s.audioEnabled && isH264);
-      if (s.audioEnabled && isH264) {
-        populateAudioDevices(s.audioDevice || '');
-      }
     }
 
     function collectSettings() {
@@ -775,7 +739,6 @@
         allowNotifications: sFields.allowNotif.checked,
         streamMode:         sFields.streamMode.value || 'h264',
         audioEnabled:       sFields.audioEnabled.checked,
-        audioDevice:        sFields.audioDevice.value || '',
       };
     }
 
@@ -877,6 +840,10 @@
       // Start live capture once content is rendered
       const wcId = webview.getWebContentsId();
       if (wcId) api.startCapture(wcId);
+      // Start audio capture if enabled in settings
+      api.getSettings().then((s) => {
+        if (s.audioEnabled && (s.streamMode || 'h264') === 'h264') startAudioCapture();
+      });
     });
 
     webview.addEventListener('did-finish-load', () => {

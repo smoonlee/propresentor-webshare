@@ -1,6 +1,6 @@
 {
   "name": "propresenter-webshare",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "description": "Screen sharing helper app — serves a live capture for ProPresenter",
   "main": "src/main.js",
   "scripts": {

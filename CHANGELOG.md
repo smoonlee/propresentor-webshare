@@ -6,7 +6,17 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
-## [1.6.3] - 2026-07-12
+## [1.6.4] - 2026-07-13
+
+### Changed
+
+- **Native audio loopback via Electron `getDisplayMedia`** — removed all ffmpeg-based audio capture (WASAPI / DirectShow). Audio is now captured entirely through Chromium's built-in WASAPI loopback by calling `navigator.mediaDevices.getDisplayMedia({ audio: true })` in the Electron renderer; `session.setDisplayMediaRequestHandler` intercepts the call and provides `audio: 'loopback'` without any system dialog. Encoded as WebM/Opus using the browser's native `MediaRecorder` (500 ms chunks) and relayed to a separate WebSocket path (`/webshare/ws-audio`). No external software, no virtual audio cable, and no system-installed ffmpeg required. iOS Safari does not support `audio/webm;codecs=opus` in MSE and will receive video only.
+- **Separate audio WebSocket** — browser viewers connect to `/webshare/ws-audio` for audio and receive a "Tap to enable audio" button once the first audio chunk arrives. Video (`/webshare/ws`) is unchanged.
+- **Audio device dropdown removed** — the device-selection UI is no longer needed; only an Audio loopback ON/OFF toggle remains.
+
+### Fixed
+
+- **`ws` dual-server path conflict** — using two `WebSocketServer` instances with `path` filtering on the same HTTP server caused each server to call `abortHandshake(400)` and destroy sockets owned by the other. The audio server now uses `noServer: true` with a manual `upgrade` router, matching the pattern recommended in the `ws` README.
 
 ### Changed
 

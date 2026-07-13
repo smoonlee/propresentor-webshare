@@ -1,46 +1,18 @@
 'use strict';
 
-const { execFile, execFileSync, spawn } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { app } = require('electron');
 
-// MSE codec strings — H.264 High Profile Level 4.0
+// MSE codec string — H.264 High Profile Level 4.0
 // Matches the explicit -profile:v high -level 4.0 applied to every encoder below.
 const MSE_CODEC_STRING = 'avc1.640028';
-// With AAC-LC audio track (mp4a.40.2 = MPEG-4 AAC Low Complexity)
-const MSE_CODEC_STRING_WITH_AUDIO = 'avc1.640028, mp4a.40.2';
-
-// Cached ffmpeg path.  On Windows, prefer a system-installed full build (e.g.
-// `winget install Gyan.FFmpeg`) over the bundled ffmpeg-static essentials build
-// because the essentials build excludes WASAPI (needed for audio loopback).
-let _ffmpegPath = null;
 
 function getFfmpegPath() {
-  if (_ffmpegPath !== null) return _ffmpegPath;
-
-  if (process.platform === 'win32') {
-    try {
-      // where.exe returns all ffmpeg paths in PATH; use the first one
-      const whereOut = execFileSync('where.exe', ['ffmpeg'],
-        { encoding: 'utf8', timeout: 2000 });
-      const sysPath = whereOut.trim().split(/\r?\n/)[0].trim();
-      if (sysPath) {
-        // Verify this build includes WASAPI (full build vs essentials)
-        const devices = execFileSync(sysPath, ['-hide_banner', '-devices'],
-          { encoding: 'utf8', timeout: 5000 });
-        if (/\bwasapi\b/.test(devices)) {
-          console.log('[Encoder] Using system ffmpeg with WASAPI:', sysPath);
-          _ffmpegPath = sysPath;
-          return _ffmpegPath;
-        }
-      }
-    } catch (_) { /* no system ffmpeg in PATH, or check failed — fall through */ }
-  }
-
   const base = require('ffmpeg-static');
-  _ffmpegPath = app.isPackaged
-    ? base.replace(/app\.asar[\\/]/g, 'app.asar.unpacked/')
-    : base;
-  return _ffmpegPath;
+  if (app.isPackaged) {
+    return base.replace(/app\.asar[\\/]/g, 'app.asar.unpacked/');
+  }
+  return base;
 }
 
 // Test whether a given H.264 encoder is available on this machine
@@ -115,81 +87,9 @@ function keyframeInterval(fps) {
   return Math.max(1, Math.ceil(fps / 10));
 }
 
-// Detect which audio capture formats are available in the bundled ffmpeg build.
-// Cached as a Promise so the device check only runs once per process.
-let _audioFormats = null;
-function getAudioFormats() {
-  if (_audioFormats !== null) return _audioFormats;
-  _audioFormats = new Promise((resolve) => {
-    execFile(getFfmpegPath(), ['-hide_banner', '-devices'], { timeout: 5000 },
-      (_err, stdout, stderr) => {
-        const out = (stdout || '') + (stderr || '');
-        resolve({ wasapi: /\bwasapi\b/.test(out), dshow: /\bdshow\b/.test(out) });
-      }
-    );
-  });
-  return _audioFormats;
-}
-
-// List audio devices available for capture.
-// Returns { wasapiAvailable: boolean, devices: string[] }
-// WASAPI devices are raw names; dshow devices are prefixed with 'dshow:'.
-// wasapiAvailable drives the UI choice to show the default-loopback option.
-async function listAudioDevices() {
-  const formats = await getAudioFormats();
-
-  if (formats.wasapi) {
-    // Full ffmpeg build — use WASAPI render device listing
-    return new Promise((resolve) => {
-      execFile(getFfmpegPath(), ['-f', 'wasapi', '-list_devices', 'true', '-i', 'dummy'],
-        { timeout: 5000 },
-        (_err, _stdout, stderr) => {
-          const devices = [];
-          let inRender = false;
-          for (const line of (stderr || '').split('\n')) {
-            if (line.includes('WASAPI render devices')) { inRender = true; continue; }
-            if (line.includes('WASAPI capture devices')) { inRender = false; continue; }
-            if (inRender) {
-              const m = line.match(/"([^"@][^"]*)"/); // skip @device_cm_ alternative names
-              if (m) devices.push(m[1]);
-            }
-          }
-          resolve({ wasapiAvailable: true, devices });
-        }
-      );
-    });
-  }
-
-  if (formats.dshow) {
-    // Essentials build — fall back to DirectShow device listing.
-    // Regular dshow audio devices are capture inputs (microphones, webcam audio).
-    // The only dshow devices useful for system audio loopback are output-mix
-    // devices like "Stereo Mix" or "What U Hear" (disabled by default in Windows).
-    // Filter to only those candidates; plain microphone/webcam devices are useless here.
-    return new Promise((resolve) => {
-      execFile(getFfmpegPath(),
-        ['-hide_banner', '-f', 'dshow', '-list_devices', 'true', '-i', 'dummy'],
-        { timeout: 5000 },
-        (_err, _stdout, stderr) => {
-          const devices = [];
-          const LOOPBACK_NAMES = /stereo mix|what u hear|wave out|loopback/i;
-          for (const line of (stderr || '').split('\n')) {
-            // dshow prints: [dshow @ ...] "Device Name" (audio)
-            const m = line.match(/"([^"]+)"\s*\(audio\)/);
-            if (m && LOOPBACK_NAMES.test(m[1])) devices.push('dshow:' + m[1]);
-          }
-          resolve({ wasapiAvailable: false, devices });
-        }
-      );
-    });
-  }
-
-  return { wasapiAvailable: false, devices: [] };
-}
-
 // Spawn an ffmpeg process: reads raw BGRA frames on stdin, outputs fragmented MP4 on stdout.
-// When audioDevice is a non-empty string, adds a WASAPI loopback input before the video pipe.
-function spawnEncoder(codec, width, height, fps, audioDevice = null) {
+// Video-only; audio is captured separately via Electron's getDisplayMedia loopback.
+function spawnEncoder(codec, width, height, fps) {
   const ffmpegPath = getFfmpegPath();
   const kf = keyframeInterval(fps);
 
@@ -198,39 +98,15 @@ function spawnEncoder(codec, width, height, fps, audioDevice = null) {
     ? ['-keyint_min', String(kf), '-sc_threshold', '0']
     : [];
 
-  // When audio is requested, determine the capture format from the device value:
-  //   ''             → WASAPI default render device (loopback)
-  //   'dshow:name'   → DirectShow audio device (e.g. Stereo Mix, virtual cable)
-  //   'any other'    → WASAPI named device (loopback), backwards compat
-  // WASAPI loopback is input 0; the video pipe becomes input 1 (hence the -map flags).
-  let audioInputArgs = [];
-  let mapArgs = [];
-  let audioOutputArgs = [];
-
-  if (audioDevice !== null) {
-    if (audioDevice.startsWith('dshow:')) {
-      const devName = audioDevice.slice(6);
-      audioInputArgs = ['-f', 'dshow', '-thread_queue_size', '512', '-i', `audio=${devName}`];
-    } else {
-      // WASAPI loopback: put -loopback immediately after -f wasapi for reliable option parsing
-      audioInputArgs = ['-f', 'wasapi', '-loopback', '-thread_queue_size', '512', '-i', audioDevice];
-    }
-    mapArgs = ['-map', '1:v:0', '-map', '0:a:0'];
-    audioOutputArgs = ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000'];
-  }
-
   const args = [
-    '-hide_banner', '-loglevel', 'error',   // suppress banner/progress; only real errors
-    ...audioInputArgs,
+    '-hide_banner', '-loglevel', 'error',
     '-f', 'rawvideo', '-pix_fmt', 'bgra',
     '-s', `${width}x${height}`,
     '-r', String(fps),
     '-i', 'pipe:0',
-    ...mapArgs,
     ...buildCodecArgs(codec),
     '-g', String(kf),
     ...x264Only,
-    ...audioOutputArgs,
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
     '-f', 'mp4',
     'pipe:1',
@@ -239,4 +115,4 @@ function spawnEncoder(codec, width, height, fps, audioDevice = null) {
   return spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
-module.exports = { detectCodec, spawnEncoder, listAudioDevices, MSE_CODEC_STRING, MSE_CODEC_STRING_WITH_AUDIO };
+module.exports = { detectCodec, spawnEncoder, MSE_CODEC_STRING };
