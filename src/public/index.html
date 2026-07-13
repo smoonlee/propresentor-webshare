@@ -81,8 +81,16 @@
     let fatalError = false;
 
     // ── Audio loopback (WebM/Opus via /webshare/ws-audio) ────────────────────
-    const AUDIO_MIME = 'audio/webm;codecs=opus';
-    const audioSupported = !!(window.MediaSource && MediaSource.isTypeSupported(AUDIO_MIME));
+    // Some Chromium-based MSE builds (including certain Edge-for-Android versions)
+    // accept audio-only WebM content under 'video/webm' even when 'audio/webm'
+    // returns true from isTypeSupported, because the SourceBuffer decoder path
+    // differs between the two container type registrations.
+    const AUDIO_MIME_CANDIDATES = ['audio/webm;codecs=opus', 'video/webm;codecs=opus'];
+    const AUDIO_MIME = window.MediaSource
+      ? (AUDIO_MIME_CANDIDATES.find(t => MediaSource.isTypeSupported(t)) || '')
+      : '';
+    const audioSupported = !!AUDIO_MIME;
+    console.log('[Audio] MIME type selected:', AUDIO_MIME || '(none — MSE unsupported)');
     let wsAudio = null;
     let audioMediaSource = null;
     let audioSourceBuffer = null;
@@ -112,7 +120,13 @@
           // MSE SourceBuffer decode/quota error — the buffer is now unusable.
           // Close the WebSocket so the onclose handler tears down MSE and
           // reconnects, giving us a fresh SourceBuffer + new init segment.
-          console.warn('[Audio] SourceBuffer error — restarting audio pipeline');
+          const buffered = audioSourceBuffer?.buffered;
+          const bufDesc = buffered?.length > 0
+            ? `[${buffered.start(0).toFixed(2)}–${buffered.end(buffered.length-1).toFixed(2)}s]`
+            : 'empty';
+          console.warn('[Audio] SourceBuffer error — MIME:', AUDIO_MIME,
+            'readyState:', audioMediaSource?.readyState, 'buffered:', bufDesc,
+            '— restarting audio pipeline');
           if (wsAudio) { try { wsAudio.close(4001, 'sourcebuffer-error'); } catch (_) {} }
         });
         audioSourceBuffer.addEventListener('abort', () => console.warn('[Audio] SourceBuffer aborted'));
@@ -134,7 +148,10 @@
           try { audioSourceBuffer.appendBuffer(audioPendingChunks.shift()); } catch (_) {}
         }
         frameAudio.muted = true; // start muted until user taps button
-        frameAudio.play().catch(() => {});
+        // Do NOT call play() here — calling play() before any audio data is in
+        // the buffer causes an internal 'failed to start' path in some Edge MSE
+        // builds that manifests as a SourceBuffer error event.  play() is called
+        // once the first real audio data arrives (in appendAudioChunk below).
       }, { once: true });
     }
 
@@ -147,6 +164,8 @@
         audioHasData = true;
         console.log('[Audio] First chunk appended to SourceBuffer — showing unmute button');
         btnUnmute.style.display = 'block'; // first chunk: show unmute button
+        // Start playback now that we have buffered audio to decode.
+        frameAudio.play().catch(() => {});
       }
       if (audioSourceBuffer.updating) { audioPendingChunks.push(data); return; }
       try { audioSourceBuffer.appendBuffer(data); }
