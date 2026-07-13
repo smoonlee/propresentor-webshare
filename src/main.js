@@ -391,8 +391,15 @@ ipcMain.handle('save-settings', (_event, s) => {
 ipcMain.handle('get-encoder-info', () => encoderInfo || null);
 
 // ── IPC: relay audio chunks (WebM/Opus) from renderer to WebSocket clients ──
+let _ipcAudioChunkCount = 0;
 ipcMain.on('audio-chunk', (_event, buffer) => {
   if (!server) return;
+  _ipcAudioChunkCount++;
+  if (_ipcAudioChunkCount === 1) {
+    console.log('[Audio] First IPC chunk — type:', buffer?.constructor?.name, 'size:', buffer?.length);
+  } else if (_ipcAudioChunkCount % 20 === 0) {
+    console.log('[Audio] IPC chunk count:', _ipcAudioChunkCount);
+  }
   // WebM streams begin with an EBML header (magic bytes 1A 45 DF A3).
   // The first ondataavailable chunk from MediaRecorder always contains it.
   // Store it so late-joining audio viewers receive the header first and
@@ -402,6 +409,7 @@ ipcMain.on('audio-chunk', (_event, buffer) => {
   if (buffer && buffer.length >= 4 &&
       buffer[0] === 0x1A && buffer[1] === 0x45 &&
       buffer[2] === 0xDF && buffer[3] === 0xA3) {
+    console.log('[Audio] EBML init segment detected, size:', buffer.length);
     server.setAudioInit(buffer);
   }
   server.broadcastAudioChunk(buffer);

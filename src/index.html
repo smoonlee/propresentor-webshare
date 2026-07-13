@@ -652,25 +652,41 @@
     // provides audio:'loopback' (Chromium WASAPI), so no ffmpeg WASAPI needed.
     let audioMediaRecorder = null;
     let audioStream = null;
+    let _audioChunkCount = 0;
 
     async function startAudioCapture() {
       if (audioMediaRecorder) return;
+      console.log('[Audio] startAudioCapture: calling getDisplayMedia');
       try {
         const ms = await navigator.mediaDevices.getDisplayMedia({
           audio: true,
           video: { width: 1, height: 1, frameRate: 1 },
         });
-        const audioTrack = ms.getAudioTracks()[0];
-        if (!audioTrack) { ms.getTracks().forEach(t => t.stop()); return; }
+        const audioTracks = ms.getAudioTracks();
+        const videoTracks = ms.getVideoTracks();
+        console.log('[Audio] getDisplayMedia succeeded —', {
+          audioTracks: audioTracks.map(t => ({ label: t.label, readyState: t.readyState, muted: t.muted })),
+          videoTracks: videoTracks.map(t => ({ label: t.label, readyState: t.readyState })),
+        });
+        const audioTrack = audioTracks[0];
+        if (!audioTrack) {
+          console.warn('[Audio] No audio track in MediaStream — loopback may be unsupported');
+          ms.getTracks().forEach(t => t.stop()); return;
+        }
         // Do NOT stop the video tracks — on Windows the WASAPI loopback audio is
         // tied to the desktop capture session.  Stopping the video track closes
         // that session and immediately ends the audio track too.
         // Using the full stream with an audio-only mimeType is safe; MediaRecorder
         // ignores video tracks when the mimeType specifies audio/webm;codecs=opus.
         audioStream = ms;
+        _audioChunkCount = 0;
         const recorder = new MediaRecorder(ms, { mimeType: 'audio/webm;codecs=opus' });
         recorder.ondataavailable = async (e) => {
           if (e.data.size > 0) {
+            _audioChunkCount++;
+            if (_audioChunkCount === 1 || _audioChunkCount % 20 === 0) {
+              console.log('[Audio] Chunk #' + _audioChunkCount + ' size=' + e.data.size + 'B');
+            }
             try { api.sendAudioChunk(await e.data.arrayBuffer()); } catch (_) {}
           }
         };
@@ -679,6 +695,7 @@
           if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
         };
         recorder.start(500); // 500 ms chunks
+        console.log('[Audio] MediaRecorder started, state:', recorder.state);
         audioMediaRecorder = recorder;
       } catch (err) {
         console.error('[Audio] startAudioCapture failed:', err);
@@ -794,6 +811,14 @@
         el.style.animation = '';
       }
       api.applySettings(s);
+      // Start/stop audio capture immediately so the user doesn't have to reload
+      // the webview after toggling the Audio loopback setting.
+      const isH264 = (s.streamMode || 'h264') === 'h264';
+      if (s.audioEnabled && isH264) {
+        startAudioCapture(); // no-op if already running
+      } else {
+        stopAudioCapture();
+      }
       // Reload webview when capture settings change so the new quality/fps is visible
       const captureChanged = s.captureFps !== settingsOrigFps || s.jpegQuality !== settingsOrigQuality;
       if (captureChanged && webview.src && webview.src !== 'about:blank') {

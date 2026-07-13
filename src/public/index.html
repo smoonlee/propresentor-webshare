@@ -89,6 +89,7 @@
     let audioPendingChunks = [];
     let audioHasData = false;
     let audioReconnectDelay = 5000;
+    let _wsAudioChunkCount = 0;
 
     btnUnmute.addEventListener('click', () => {
       frameAudio.muted = false;
@@ -105,7 +106,10 @@
         try {
           audioSourceBuffer = audioMediaSource.addSourceBuffer(AUDIO_MIME);
           audioSourceBuffer.mode = 'sequence';
-        } catch (_) { return; }
+          console.log('[Audio] SourceBuffer created, MIME supported:', AUDIO_MIME);
+        } catch (e) { console.error('[Audio] addSourceBuffer failed:', e); return; }
+        audioSourceBuffer.addEventListener('error', (ev) => console.error('[Audio] SourceBuffer error', ev));
+        audioSourceBuffer.addEventListener('abort', () => console.warn('[Audio] SourceBuffer aborted'));
         audioSourceBuffer.addEventListener('updateend', () => {
           if (audioPendingChunks.length > 0 && !audioSourceBuffer.updating) {
             try { audioSourceBuffer.appendBuffer(audioPendingChunks.shift()); } catch (_) {}
@@ -126,6 +130,7 @@
       }
       if (!audioHasData) {
         audioHasData = true;
+        console.log('[Audio] First chunk appended to SourceBuffer — showing unmute button');
         btnUnmute.style.display = 'block'; // first chunk: show unmute button
       }
       if (audioSourceBuffer.updating) { audioPendingChunks.push(data); return; }
@@ -151,9 +156,16 @@
       wsAudio = new WebSocket(`${proto}://${location.host}/webshare/ws-audio`);
       wsAudio.binaryType = 'arraybuffer';
       const t0 = Date.now();
-      wsAudio.onopen = () => { audioReconnectDelay = 5000; setupAudioMSE(); };
-      wsAudio.onmessage = (e) => { if (e.data instanceof ArrayBuffer) appendAudioChunk(new Uint8Array(e.data)); };
+      wsAudio.onopen = () => { console.log('[Audio] WebSocket /webshare/ws-audio connected'); audioReconnectDelay = 5000; _wsAudioChunkCount = 0; setupAudioMSE(); };
+      wsAudio.onmessage = (e) => {
+        if (!(e.data instanceof ArrayBuffer)) return;
+        _wsAudioChunkCount++;
+        if (_wsAudioChunkCount === 1) console.log('[Audio] First chunk from WebSocket, size:', e.data.byteLength);
+        else if (_wsAudioChunkCount % 20 === 0) console.log('[Audio] Browser WebSocket chunk count:', _wsAudioChunkCount);
+        appendAudioChunk(new Uint8Array(e.data));
+      };
       wsAudio.onclose = () => {
+        console.log('[Audio] WebSocket /webshare/ws-audio closed, chunks received:', _wsAudioChunkCount);
         wsAudio = null; teardownAudio();
         if (Date.now() - t0 < 1500) audioReconnectDelay = Math.min(audioReconnectDelay * 2, 30000);
         else audioReconnectDelay = 5000;
