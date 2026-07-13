@@ -673,14 +673,15 @@
           console.warn('[Audio] No audio track in MediaStream — loopback may be unsupported');
           ms.getTracks().forEach(t => t.stop()); return;
         }
-        // Do NOT stop the video tracks — on Windows the WASAPI loopback audio is
-        // tied to the desktop capture session.  Stopping the video track closes
-        // that session and immediately ends the audio track too.
-        // Using the full stream with an audio-only mimeType is safe; MediaRecorder
-        // ignores video tracks when the mimeType specifies audio/webm;codecs=opus.
-        audioStream = ms;
+        // Keep the full stream (ms) alive so the video tracks preserve the WASAPI
+        // loopback session on Windows.  Feed MediaRecorder an audio-only copy so
+        // there is no ambiguity about which tracks to encode — the recorder spec
+        // says to throw NotSupportedError if there are no supported tracks, but
+        // some Chromium builds also throw when the mimeType and stream tracks
+        // disagree.  An explicit audio-only MediaStream avoids that entirely.
+        audioStream = ms; // full-stream ref kept for cleanup (stops video + audio tracks)
         _audioChunkCount = 0;
-        const recorder = new MediaRecorder(ms, { mimeType: 'audio/webm;codecs=opus' });
+        const recorder = new MediaRecorder(new MediaStream([audioTrack]), { mimeType: 'audio/webm;codecs=opus' });
         recorder.ondataavailable = async (e) => {
           if (e.data.size > 0) {
             _audioChunkCount++;

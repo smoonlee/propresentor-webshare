@@ -521,8 +521,17 @@ app.whenReady().then(() => {
   // audio: 'loopback' uses Chromium's built-in WASAPI stack — no ffmpeg needed.
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      if (!sources || sources.length === 0) {
+        console.warn('[Audio] desktopCapturer returned no screen sources — loopback unavailable');
+        callback({});
+        return;
+      }
+      console.log('[Audio] desktopCapturer sources:', sources.length, '— using:', sources[0].name);
       callback({ video: sources[0], audio: 'loopback' });
-    }).catch(() => callback({}));
+    }).catch((err) => {
+      console.error('[Audio] desktopCapturer.getSources failed:', err.message);
+      callback({});
+    });
   }, { useSystemPicker: false });
   server = createServer(cfg.port, cfg.bindAddress);
   server.ready.catch((err) => {
