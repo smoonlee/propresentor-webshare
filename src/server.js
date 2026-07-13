@@ -16,6 +16,29 @@ function createServer(port, bindAddress) {
   // Serve the webshare viewer page
   app.use('/webshare', express.static(path.join(__dirname, 'public')));
 
+  // HTTP chunked audio streaming — serves WebM/Opus directly to <audio> elements.
+  // More compatible than WebSocket+MSE: the browser's native audio demuxer handles
+  // the container format without needing explicit SourceBuffer management.
+  let audioHttpClients = [];
+  app.get('/webshare/audio', (req, res) => {
+    res.setHeader('Content-Type', 'audio/webm');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Accel-Buffering', 'no'); // disable nginx proxy buffering if present
+    // Replay stored init segment so late-joining viewers can decode the stream.
+    if (audioInitChunk) {
+      try { res.write(Buffer.from(audioInitChunk)); } catch (_) {}
+    }
+    audioHttpClients.push(res);
+    console.log(`[WebShare] Audio HTTP viewer connected (${audioHttpClients.length} total)`);
+    const remove = () => {
+      const i = audioHttpClients.indexOf(res);
+      if (i !== -1) { audioHttpClients.splice(i, 1); }
+      console.log(`[WebShare] Audio HTTP viewer disconnected (${audioHttpClients.length} remaining)`);
+    };
+    req.on('close', remove);
+    req.on('error', () => { remove(); try { res.end(); } catch (_) {} });
+  });
+
   // Both WebSocket servers use noServer:true so neither registers its own
   // 'upgrade' listener.  A single manual router dispatches by path.
   // Using { server, path } on either server causes it to call
@@ -123,10 +146,17 @@ function createServer(port, bindAddress) {
     const isRestart = audioInitChunk !== null;
     audioInitChunk = buf;
     if (isRestart) {
-      console.log('[WebShare] Audio stream restarted — closing', wssAudio.clients.size, 'audio viewer(s) for clean reconnect');
+      const wsCount = wssAudio.clients.size;
+      const httpCount = audioHttpClients.length;
+      console.log(`[WebShare] Audio stream restarted — closing ${wsCount} WS + ${httpCount} HTTP audio viewer(s) for clean reconnect`);
       for (const client of wssAudio.clients) {
         try { client.close(1001, 'stream-restart'); } catch (_) {}
       }
+      // End HTTP streaming connections so clients reconnect with fresh init segment
+      for (const res of audioHttpClients) {
+        try { res.end(); } catch (_) {}
+      }
+      audioHttpClients = [];
     }
   }
 
@@ -136,11 +166,18 @@ function createServer(port, bindAddress) {
 
   // Broadcast a WebM/Opus audio chunk to all connected audio viewers
   function broadcastAudioChunk(chunk) {
-    if (wssAudio.clients.size === 0) return;
+    // WebSocket clients
     for (const client of wssAudio.clients) {
       if (client.readyState === 1 && client.bufferedAmount < MAX_BUFFERED) {
         try { client.send(chunk); } catch (_) {}
       }
+    }
+    // HTTP streaming clients
+    if (audioHttpClients.length > 0) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      audioHttpClients = audioHttpClients.filter(res => {
+        try { res.write(buf); return true; } catch (_) { return false; }
+      });
     }
   }
 
@@ -213,6 +250,7 @@ function createServer(port, bindAddress) {
     close: () => {
       for (const client of wss.clients) client.terminate();
       for (const client of wssAudio.clients) client.terminate();
+      for (const res of audioHttpClients) { try { res.end(); } catch (_) {} }
       wss.close();
       wssAudio.close();
       httpServer.close();

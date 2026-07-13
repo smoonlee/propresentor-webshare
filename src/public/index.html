@@ -80,138 +80,52 @@
     let pendingChunks = [];
     let fatalError = false;
 
-    // ── Audio loopback (WebM/Opus via /webshare/ws-audio) ────────────────────
-    // Some Chromium-based MSE builds (including certain Edge-for-Android versions)
-    // accept audio-only WebM content under 'video/webm' even when 'audio/webm'
-    // returns true from isTypeSupported, because the SourceBuffer decoder path
-    // differs between the two container type registrations.
-    const AUDIO_MIME_CANDIDATES = ['audio/webm;codecs=opus', 'video/webm;codecs=opus'];
-    const AUDIO_MIME = window.MediaSource
-      ? (AUDIO_MIME_CANDIDATES.find(t => MediaSource.isTypeSupported(t)) || '')
-      : '';
-    const audioSupported = !!AUDIO_MIME;
-    console.log('[Audio] MIME type selected:', AUDIO_MIME || '(none — MSE unsupported)');
-    let wsAudio = null;
-    let audioMediaSource = null;
-    let audioSourceBuffer = null;
-    let audioPendingChunks = [];
-    let audioHasData = false;
-    let audioReconnectDelay = 5000;
-    let _wsAudioChunkCount = 0;
+    // ── Audio loopback (HTTP chunked WebM streaming) ───────────────────────────
+    // Using plain HTTP chunked transfer rather than WebSocket + MSE SourceBuffer.
+    // The browser's native <audio> demuxer handles streaming WebM/Opus content
+    // directly without requiring explicit SourceBuffer management.  This is far
+    // more compatible across mobile browsers: the MSE path was causing immediate
+    // SourceBuffer decode errors on Edge Android regardless of MIME type tried.
+    const audioSupported = !!(frameAudio &&
+      document.createElement('audio').canPlayType('audio/webm') !== '');
+    let _audioConnected = false;
+    let audioReconnectDelay = 2000;
 
     btnUnmute.addEventListener('click', () => {
       frameAudio.muted = false;
-      frameAudio.play().catch(() => {});
       btnUnmute.style.display = 'none';
     });
 
-    function setupAudioMSE() {
-      teardownAudio();
-      if (!audioSupported) return;
-      audioMediaSource = new MediaSource();
-      frameAudio.src = URL.createObjectURL(audioMediaSource);
-      audioMediaSource.addEventListener('sourceopen', () => {
-        try {
-          audioSourceBuffer = audioMediaSource.addSourceBuffer(AUDIO_MIME);
-          audioSourceBuffer.mode = 'sequence';
-          console.log('[Audio] SourceBuffer created, MIME supported:', AUDIO_MIME);
-        } catch (e) { console.error('[Audio] addSourceBuffer failed:', e); return; }
-        audioSourceBuffer.addEventListener('error', () => {
-          // MSE SourceBuffer decode/quota error — the buffer is now unusable.
-          // Close the WebSocket so the onclose handler tears down MSE and
-          // reconnects, giving us a fresh SourceBuffer + new init segment.
-          const buffered = audioSourceBuffer?.buffered;
-          const bufDesc = buffered?.length > 0
-            ? `[${buffered.start(0).toFixed(2)}–${buffered.end(buffered.length-1).toFixed(2)}s]`
-            : 'empty';
-          console.warn('[Audio] SourceBuffer error — MIME:', AUDIO_MIME,
-            'readyState:', audioMediaSource?.readyState, 'buffered:', bufDesc,
-            '— restarting audio pipeline');
-          if (wsAudio) { try { wsAudio.close(4001, 'sourcebuffer-error'); } catch (_) {} }
-        });
-        audioSourceBuffer.addEventListener('abort', () => console.warn('[Audio] SourceBuffer aborted'));
-        audioSourceBuffer.addEventListener('updateend', () => {
-          if (!audioSourceBuffer || audioSourceBuffer.updating) return;
-          // Trim buffered audio older than 10 s behind playhead to avoid quota overflow.
-          // Do this in updateend (not updating) so we don't clash with an append.
-          if (frameAudio.currentTime > 10 && audioSourceBuffer.buffered.length > 0) {
-            const trimTo = frameAudio.currentTime - 8;
-            if (trimTo > audioSourceBuffer.buffered.start(0) + 1) {
-              try { audioSourceBuffer.remove(audioSourceBuffer.buffered.start(0), trimTo); return; } catch (_) {}
-            }
-          }
-          if (audioPendingChunks.length > 0) {
-            try { audioSourceBuffer.appendBuffer(audioPendingChunks.shift()); } catch (_) {}
-          }
-        });
-        if (audioPendingChunks.length > 0 && !audioSourceBuffer.updating) {
-          try { audioSourceBuffer.appendBuffer(audioPendingChunks.shift()); } catch (_) {}
-        }
-        frameAudio.muted = true; // start muted until user taps button
-        // Do NOT call play() here — calling play() before any audio data is in
-        // the buffer causes an internal 'failed to start' path in some Edge MSE
-        // builds that manifests as a SourceBuffer error event.  play() is called
-        // once the first real audio data arrives (in appendAudioChunk below).
-      }, { once: true });
-    }
-
-    function appendAudioChunk(data) {
-      if (!audioSourceBuffer || !audioMediaSource || audioMediaSource.readyState !== 'open') {
-        if (audioPendingChunks.length < 30) audioPendingChunks.push(data);
-        return;
-      }
-      if (!audioHasData) {
-        audioHasData = true;
-        console.log('[Audio] First chunk appended to SourceBuffer — showing unmute button');
-        btnUnmute.style.display = 'block'; // first chunk: show unmute button
-        // Start playback now that we have buffered audio to decode.
-        frameAudio.play().catch(() => {});
-      }
-      if (audioSourceBuffer.updating) { audioPendingChunks.push(data); return; }
-      try { audioSourceBuffer.appendBuffer(data); }
-      catch (_) { audioPendingChunks = []; }
-    }
-
-    function teardownAudio() {
-      audioHasData = false;
-      audioPendingChunks = [];
-      audioSourceBuffer = null;
-      btnUnmute.style.display = 'none';
-      if (audioMediaSource && audioMediaSource.readyState === 'open') {
-        try { audioMediaSource.endOfStream(); } catch (_) {}
-      }
-      audioMediaSource = null;
-      if (frameAudio.src) { const old = frameAudio.src; frameAudio.src = ''; try { URL.revokeObjectURL(old); } catch (_) {} }
-    }
-
     function connectAudio() {
-      if (!audioSupported || wsAudio) return;
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      wsAudio = new WebSocket(`${proto}://${location.host}/webshare/ws-audio`);
-      wsAudio.binaryType = 'arraybuffer';
-      const t0 = Date.now();
-      wsAudio.onopen = () => { console.log('[Audio] WebSocket /webshare/ws-audio connected'); audioReconnectDelay = 5000; _wsAudioChunkCount = 0; setupAudioMSE(); };
-      wsAudio.onmessage = (e) => {
-        if (!(e.data instanceof ArrayBuffer)) return;
-        _wsAudioChunkCount++;
-        if (_wsAudioChunkCount === 1) console.log('[Audio] First chunk from WebSocket, size:', e.data.byteLength);
-        else if (_wsAudioChunkCount % 20 === 0) console.log('[Audio] Browser WebSocket chunk count:', _wsAudioChunkCount);
-        appendAudioChunk(new Uint8Array(e.data));
-      };
-      wsAudio.onclose = (ev) => {
-        console.log('[Audio] WebSocket /webshare/ws-audio closed, code:', ev.code, 'chunks received:', _wsAudioChunkCount);
-        wsAudio = null; teardownAudio();
-        // code 1001 = server-side stream restart; 4001 = local SourceBuffer error
-        if (ev.code === 1001 || ev.code === 4001) {
-          audioReconnectDelay = 1000;
-        } else if (Date.now() - t0 < 1500) {
-          audioReconnectDelay = Math.min(audioReconnectDelay * 2, 30000);
-        } else {
-          audioReconnectDelay = 5000;
-        }
+      if (_audioConnected || !audioSupported) return;
+      _audioConnected = true;
+
+      let done = false;
+      function disconnect(reason) {
+        if (done) return;
+        done = true;
+        _audioConnected = false;
+        console.log('[Audio] HTTP stream', reason, '— reconnecting in', audioReconnectDelay, 'ms');
+        frameAudio.pause();
+        frameAudio.src = '';
+        btnUnmute.style.display = 'none';
         setTimeout(connectAudio, audioReconnectDelay);
-      };
-      wsAudio.onerror = () => wsAudio.close();
+      }
+
+      frameAudio.muted = true;
+      frameAudio.addEventListener('canplay', () => {
+        console.log('[Audio] HTTP stream buffering — showing unmute button');
+        btnUnmute.style.display = 'block';
+      }, { once: true });
+      frameAudio.addEventListener('ended', () => disconnect('ended'), { once: true });
+      frameAudio.addEventListener('error', () => {
+        const code = frameAudio.error ? frameAudio.error.code : '?';
+        disconnect('error(code=' + code + ')');
+      }, { once: true });
+
+      frameAudio.src = '/webshare/audio?t=' + Date.now();
+      console.log('[Audio] Connecting via HTTP stream /webshare/audio');
+      frameAudio.play().catch(() => {});
     }
 
     // ── Video stream (H.264 fragmented MP4 / JPEG via /webshare/ws) ──────────
