@@ -343,6 +343,38 @@
     #update-banner .update-download:hover { background: #f0b970; }
     #update-banner .update-dismiss { background: none; color: #666; font-size: 15px; padding: 0 4px; }
     #update-banner .update-dismiss:hover { color: #ccc; }
+    /* ── QR code popover ── */
+    #qr-popover {
+      display: none;
+      position: fixed;
+      bottom: 36px; right: 12px;
+      z-index: 300;
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    #qr-popover.visible { display: block; }
+    #qr-popover img { display: block; width: 160px; height: 160px; border-radius: 4px; }
+    #qr-popover .qr-label {
+      margin-top: 6px;
+      font-size: 10px;
+      color: #555;
+      text-align: center;
+      word-break: break-all;
+    }
+    #btn-qr {
+      padding: 2px 7px;
+      border: 1px solid #2a3a5c;
+      border-radius: 4px;
+      background: transparent;
+      color: #6ca0dc;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.4px;
+    }
+    #btn-qr:hover { background: rgba(108,160,220,0.12); border-color: #6ca0dc; }
   </style>
 </head>
 <body>
@@ -376,6 +408,13 @@
     <span id="viewer-count">0 viewers</span>
     <span class="spacer"></span>
     <a href="#" id="server-url" style="color:#6ca0dc;text-decoration:underline;cursor:pointer;">loading…</a>
+    <button id="btn-qr" title="Show QR code for viewer URL">QR</button>
+  </div>
+
+  <!-- QR code popover -->
+  <div id="qr-popover">
+    <img id="qr-img" alt="QR code" />
+    <div class="qr-label" id="qr-label"></div>
   </div>
 
   <!-- Diagnostics overlay -->
@@ -442,6 +481,14 @@
           <label>Encoder</label>
           <span id="s-encoder-label" style="font-size:12px;color:#aaa;flex:1">Detecting…</span>
         </div>
+        <div class="s-field">
+          <label>Audio loopback</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-audio-enabled" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div style="font-size:10px;color:#4e637f;margin-top:-4px;padding:0 0 6px;">Captures all system audio from the Windows default playback device</div>
       </div>
 
       <div class="s-section">
@@ -598,7 +645,107 @@
       allowGeo:      document.getElementById('s-allow-geo'),
       allowNotif:    document.getElementById('s-allow-notif'),
       streamMode:    document.getElementById('s-stream-mode'),
+      audioEnabled:  document.getElementById('s-audio-enabled'),
     };
+
+    // ── Audio capture via WASAPI loopback ──
+    // getDisplayMedia + setDisplayMediaRequestHandler provides system audio.
+    // Encoded as WebM/Opus via MediaRecorder and relayed to viewers over HTTP.
+    let audioMediaRecorder = null;
+    let audioStream = null;
+    let _audioCapturePending = false; // prevents concurrent getDisplayMedia calls
+    let _audioChunkCount = 0;
+
+    async function startAudioCapture() {
+      if (audioMediaRecorder || _audioCapturePending) return;
+      _audioCapturePending = true;
+      console.log('[Audio] startAudioCapture: calling getDisplayMedia');
+      try {
+        // getDisplayMedia — setDisplayMediaRequestHandler in main.js intercepts
+        // this and provides audio:'loopback' (WASAPI system audio capture).
+        const ms = await navigator.mediaDevices.getDisplayMedia({
+          audio: true,
+          video: { width: 1, height: 1, frameRate: 1 },
+        });
+        const audioTracks = ms.getAudioTracks();
+        const videoTracks = ms.getVideoTracks();
+        console.log('[Audio] getDisplayMedia succeeded —', {
+          audioTracks: audioTracks.map(t => ({ label: t.label, readyState: t.readyState, muted: t.muted })),
+          videoTracks: videoTracks.map(t => ({ label: t.label, readyState: t.readyState })),
+        });
+        const audioTrack = audioTracks[0];
+        if (!audioTrack) {
+          console.warn('[Audio] No audio track in MediaStream — loopback may be unsupported');
+          _audioCapturePending = false;
+          ms.getTracks().forEach(t => t.stop()); return;
+        }
+        console.log('[Audio] Track:', audioTrack.label || '(no label)', '| muted:', audioTrack.muted, '| readyState:', audioTrack.readyState);
+        // Keep the full stream (ms) alive so the video tracks preserve the WASAPI
+        // loopback session on Windows.
+        audioStream = ms;
+        _audioChunkCount = 0;
+
+        const recorder = new MediaRecorder(new MediaStream([audioTrack]), {
+          mimeType: 'audio/webm;codecs=opus',
+          audioBitsPerSecond: 128000,
+        });
+        recorder.ondataavailable = async (e) => {
+          if (e.data.size > 0) {
+            _audioChunkCount++;
+            if (_audioChunkCount === 1 || _audioChunkCount % 50 === 0) {
+              console.log('[Audio] Chunk #' + _audioChunkCount + ' size=' + e.data.size + 'B');
+            }
+            try { api.sendAudioChunk(await e.data.arrayBuffer()); } catch (_) {}
+          }
+        };
+        recorder.onstop = () => {
+          audioMediaRecorder = null;
+          if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+        };
+        recorder.onerror = (e) => {
+          console.error('[Audio] MediaRecorder error:', e.error || e);
+          audioMediaRecorder = null;
+          if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+        };
+        // Use timeslice=960 (960ms = 48 Opus frames at 20ms each).
+        // This aligns WebM Cluster boundaries with complete Opus frame groups,
+        // preventing the "watery" artefact caused by mid-frame cluster splits.
+        // Values below ~500ms cause audible boundary artefacts; 960ms gives
+        // clean encoding with acceptable ~1s delivery latency.
+        recorder.start(960);
+        console.log('[Audio] MediaRecorder started, state:', recorder.state);
+        _audioCapturePending = false;
+        audioMediaRecorder = recorder;
+      } catch (err) {
+        console.error('[Audio] startAudioCapture failed:', err);
+        _audioCapturePending = false;
+        audioMediaRecorder = null;
+        audioStream = null;
+      }
+    }
+
+    function stopAudioCapture() {
+      _audioCapturePending = false;
+      if (audioMediaRecorder) {
+        try { audioMediaRecorder.stop(); } catch (_) {}
+        audioMediaRecorder = null;
+      }
+      if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+    }
+
+    sFields.audioEnabled.addEventListener('change', () => {
+      const on = sFields.audioEnabled.checked;
+      if (!on) stopAudioCapture();
+    });
+
+    sFields.streamMode.addEventListener('change', () => {
+      const isH264 = sFields.streamMode.value === 'h264';
+      sFields.audioEnabled.disabled = !isH264;
+      if (!isH264) {
+        sFields.audioEnabled.checked = false;
+        stopAudioCapture();
+      }
+    });
 
     function populateSettings(s) {
       sFields.port.value              = s.port;
@@ -613,6 +760,9 @@
       sFields.allowGeo.checked        = !!s.allowGeolocation;
       sFields.allowNotif.checked      = !!s.allowNotifications;
       sFields.streamMode.value        = s.streamMode || 'h264';
+      const isH264 = (s.streamMode || 'h264') === 'h264';
+      sFields.audioEnabled.disabled   = !isH264;
+      sFields.audioEnabled.checked    = !!s.audioEnabled && isH264;
     }
 
     function collectSettings() {
@@ -629,6 +779,7 @@
         allowGeolocation:   sFields.allowGeo.checked,
         allowNotifications: sFields.allowNotif.checked,
         streamMode:         sFields.streamMode.value || 'h264',
+        audioEnabled:       sFields.audioEnabled.checked,
       };
     }
 
@@ -679,6 +830,14 @@
         el.style.animation = '';
       }
       api.applySettings(s);
+      // Start/stop audio capture immediately so the user doesn't have to reload
+      // the webview after toggling the Audio loopback setting.
+      const isH264 = (s.streamMode || 'h264') === 'h264';
+      if (s.audioEnabled && isH264) {
+        startAudioCapture(); // no-op if already running
+      } else {
+        stopAudioCapture();
+      }
       // Reload webview when capture settings change so the new quality/fps is visible
       const captureChanged = s.captureFps !== settingsOrigFps || s.jpegQuality !== settingsOrigQuality;
       if (captureChanged && webview.src && webview.src !== 'about:blank') {
@@ -723,6 +882,33 @@
     api.getAlwaysOnTop().then((pinned) => {
       btnPin.classList.toggle('active', pinned);
       btnPin.textContent = pinned ? 'Pinned' : 'Pin';
+    });
+
+    /* ── Early audio capture start ── */
+    // Pre-warm the Windows audio endpoint IMMEDIATELY (before settings are read)
+    // so WASAPI loopback sees an active render endpoint from the very start.
+    // This runs in parallel with the async settings read below.
+    (function preWarmAudio() {
+      try {
+        const ctx = new AudioContext();
+        // Use white noise (broad spectrum) — more effective at waking WASAPI
+        // than a single-frequency oscillator. Volume is imperceptible.
+        const buf = ctx.createBuffer(1, ctx.sampleRate * 0.3, ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.001;
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start();
+        src.onended = () => ctx.close();
+      } catch (_) {}
+    })();
+
+    // Start WASAPI capture as early as possible — overlaps with pre-warm above.
+    api.getSettings().then((s) => {
+      if (s.audioEnabled && (s.streamMode || 'h264') === 'h264') {
+        startAudioCapture();
+      }
     });
 
     /* ── Webview events ── */
@@ -770,15 +956,44 @@
     }, 2000);
 
     /* ── Show server URL (clickable) ── */
+    let serverViewerUrl = '';
     Promise.all([api.getPort(), api.getLanIp()]).then(([port, lanIp]) => {
-      const url = 'http://' + lanIp + ':' + port + '/webshare';
-      serverUrlEl.textContent = url;
+      serverViewerUrl = 'http://' + lanIp + ':' + port + '/webshare';
+      serverUrlEl.textContent = serverViewerUrl;
       serverUrlEl.addEventListener('click', (e) => {
         e.preventDefault();
-        navigator.clipboard.writeText(url).catch(() => {});
-        api.openExternal(url);
+        navigator.clipboard.writeText(serverViewerUrl).catch(() => {});
+        api.openExternal(serverViewerUrl);
       });
       document.getElementById('diag-lan-ip').textContent = lanIp;
+    });
+
+    /* ── QR code popover ── */
+    const qrPopover = document.getElementById('qr-popover');
+    const btnQr     = document.getElementById('btn-qr');
+    let qrLoaded = false;
+
+    btnQr.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (qrPopover.classList.contains('visible')) {
+        qrPopover.classList.remove('visible');
+        return;
+      }
+      if (!qrLoaded) {
+        const dataUrl = await api.getQrCode();
+        if (dataUrl) {
+          document.getElementById('qr-img').src = dataUrl;
+          document.getElementById('qr-label').textContent = serverViewerUrl;
+          qrLoaded = true;
+        }
+      }
+      qrPopover.classList.add('visible');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!qrPopover.contains(e.target) && e.target !== btnQr) {
+        qrPopover.classList.remove('visible');
+      }
     });
 
     /* ── Diagnostics overlay ── */

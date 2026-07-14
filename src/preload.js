@@ -59,4 +59,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('encoder-detected');
     ipcRenderer.on('encoder-detected', (_e, info) => cb(info));
   },
+
+  // Send a WebM/Opus audio chunk captured in the renderer to the main process
+  sendAudioChunk: (data) => ipcRenderer.send('audio-chunk', data),
+
+  // QR code data URL for viewer URL
+  getQrCode: () => ipcRenderer.invoke('get-qr-code'),
 });

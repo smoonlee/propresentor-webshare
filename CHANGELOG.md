@@ -6,6 +6,31 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-14
+
+### Added
+
+- **Audio streaming** — enable in Settings → Streaming → Audio loopback. Captures system audio via Windows WASAPI loopback (`getDisplayMedia` + Chromium's built-in loopback), encodes as WebM/Opus (200 ms chunks) using the browser's native `MediaRecorder`, and streams to viewers via HTTP chunked transfer (`/webshare/audio`). No external software, virtual audio cable, or system-installed ffmpeg required.
+- **Browser unmute button** — remote viewers see a "🔇 Tap to enable audio" button that appears once the server confirms audio is flowing. Clicking satisfies the browser autoplay policy and starts playback. The button does not reappear after dismissal.
+- **Audio pre-warm** — a brief inaudible white-noise pulse plays at app startup to wake the Windows audio endpoint, reducing WASAPI loopback initialisation delay.
+- **QR code** — a **QR** button in the status bar generates a scannable code for the viewer URL (`http://<LAN IP>:<port>/webshare`). Eliminates manual URL typing on phones and tablets.
+
+### Changed
+
+- **Single WebSocket server** — removed the unused `/webshare/ws-audio` WebSocket server. Audio is delivered exclusively via HTTP chunked streaming which is more compatible with mobile browsers.
+- **Cache-busting** — the viewer page is now served with `Cache-Control: no-store` so phone/tablet browsers always load the latest code after an app update.
+
+### Fixed
+
+- **WebSocket write EOF crash** — added `ws.on('error', ...)` handler on each viewer connection so that asynchronous write failures are silently absorbed instead of propagating as an uncaught main-process exception.
+- **ArrayBuffer IPC handling** — Electron IPC delivers `ArrayBuffer` (not `Buffer`) from the renderer; the main process now converts immediately to avoid silent failures in EBML header detection.
+
+### Notes
+
+- Audio is captured from the Windows default playback device (WASAPI loopback). Only audio routed through that device is captured.
+- WASAPI loopback may take a few seconds to warm up after the app starts before audio flows.
+- Safari/iOS does not support `audio/webm;codecs=opus` — those viewers receive video only.
+
 ## [1.5.3] - 2026-07-12
 
 ### Fixed

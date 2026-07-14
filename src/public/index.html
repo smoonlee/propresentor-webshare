@@ -43,25 +43,169 @@
     }
     body:hover #btn-fs { opacity: 0.7; }
     #btn-fs:hover { opacity: 1 !important; background: rgba(255,255,255,0.25); }
+    #btn-unmute {
+      position: fixed;
+      bottom: 16px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      padding: 8px 18px;
+      border: none; border-radius: 6px;
+      background: rgba(255,255,255,0.18);
+      color: #fff;
+      font: 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      cursor: pointer;
+      display: none;
+    }
+    #btn-unmute:hover { background: rgba(255,255,255,0.30); }
   </style>
 </head>
 <body>
   <img    id="frame-jpeg" alt="Waiting for stream…" />
   <video  id="frame-h264" autoplay muted playsinline></video>
+  <audio  id="frame-audio" style="display:none" preload="auto" playsinline></audio>
   <div id="overlay">Waiting for stream…</div>
+  <button id="btn-unmute" title="Enable audio">🔇 Tap to enable audio</button>
   <button id="btn-fs" title="Toggle fullscreen">⛶</button>
 
   <script>
-    const frameJpeg = document.getElementById('frame-jpeg');
-    const frameH264 = document.getElementById('frame-h264');
-    const overlay   = document.getElementById('overlay');
+    const frameJpeg  = document.getElementById('frame-jpeg');
+    const frameH264  = document.getElementById('frame-h264');
+    const frameAudio = document.getElementById('frame-audio');
+    const overlay    = document.getElementById('overlay');
+    const btnUnmute  = document.getElementById('btn-unmute');
     let reconnectDelay = 1000;
     let mode = null;
     let mediaSource = null;
     let sourceBuffer = null;
     let pendingChunks = [];
     let fatalError = false;
+    // Set to true when the server confirms audio is flowing; prevents the
+    // unmute button from flickering when the HTTP audio stream briefly reconnects.
+    let audioAvailableFromServer = false;
+    // Set to true once the user clicks unmute; prevents the button from
+    // reappearing when loadedmetadata/canplay fires after the click.
+    let audioUnmuted = false;
 
+    // ── Audio loopback (HTTP chunked WebM streaming) ───────────────────────────
+    // Using plain HTTP chunked transfer rather than WebSocket + MSE SourceBuffer.
+    // The browser's native <audio> demuxer handles streaming WebM/Opus content
+    // directly without requiring explicit SourceBuffer management.  This is far
+    // more compatible across mobile browsers: the MSE path was causing immediate
+    // SourceBuffer decode errors on Edge Android regardless of MIME type tried.
+    const audioSupported = !!(frameAudio &&
+      document.createElement('audio').canPlayType('audio/webm') !== '');
+    let _audioConnected = false;
+    let audioReconnectDelay = 2000;
+
+    btnUnmute.addEventListener('click', () => {
+      frameAudio.muted = false;
+      audioUnmuted = true;
+      btnUnmute.style.display = 'none';
+
+      // Seek to the START of the LAST buffered range before playing.
+      // The server replays the session's first WebM chunk (t=0, ~500ms of audio)
+      // to every new viewer, then streams live clusters at t=elapsed (e.g. t=60000ms).
+      // This creates two buffered ranges: [0, 0.5] and [60000, ...].  Without
+      // seeking to the last range, the element plays 500ms then stalls forever.
+      function seekToLastRange() {
+        const len = frameAudio.buffered.length;
+        if (len > 0) {
+          try { frameAudio.currentTime = frameAudio.buffered.start(len - 1); } catch (_) {}
+        }
+      }
+
+      if (frameAudio.paused) {
+        // Element is paused: seek then start
+        seekToLastRange();
+        frameAudio.play().catch(e => {
+          console.log('[Audio] play() rejected on unmute:', e && e.name,
+            'readyState:', frameAudio.readyState, 'networkState:', frameAudio.networkState);
+        });
+        if (frameAudio.buffered.length === 0) {
+          // No data yet — seek when the first chunk arrives
+          function onProgress() {
+            if (frameAudio.buffered.length > 0) {
+              seekToLastRange();
+              frameAudio.removeEventListener('progress', onProgress);
+            }
+          }
+          frameAudio.addEventListener('progress', onProgress);
+        }
+      } else {
+        // Already playing muted — seek to live edge then unmuting is enough
+        seekToLastRange();
+      }
+    });
+
+    function connectAudio() {
+      if (_audioConnected || !audioSupported) return;
+      _audioConnected = true;
+
+      let done = false;
+      function disconnect(reason) {
+        if (done) return;
+        done = true;
+        _audioConnected = false;
+        audioReconnectDelay = Math.min(audioReconnectDelay * 1.5, 30000);
+        console.log('[Audio] HTTP stream', reason, '— reconnecting in', audioReconnectDelay, 'ms');
+        frameAudio.pause();
+        frameAudio.src = '';
+        // Keep the button visible if the server has confirmed audio is available —
+        // the HTTP stream may just be briefly reconnecting.
+        if (!audioAvailableFromServer) btnUnmute.style.display = 'none';
+        setTimeout(connectAudio, audioReconnectDelay);
+      }
+
+      frameAudio.muted = true;
+      // Show the unmute button as soon as the stream is usable.
+      // canplay may never fire on mobile for live streams with unknown duration.
+      // loadedmetadata fires as soon as the WebM init segment is parsed — reliable
+      // on Edge Android.  Whichever fires first wins; the second call is harmless.
+      const showUnmute = () => {
+        audioReconnectDelay = 2000; // reset backoff on successful connection
+        audioAvailableFromServer = true;
+        if (!audioUnmuted) {
+          console.log('[Audio] Stream ready — showing unmute button');
+          btnUnmute.style.display = 'block';
+        }
+      };
+      frameAudio.addEventListener('loadedmetadata', showUnmute, { once: true });
+      frameAudio.addEventListener('canplay',         showUnmute, { once: true });
+      frameAudio.addEventListener('ended', () => disconnect('ended'), { once: true });
+      frameAudio.addEventListener('error', () => {
+        const code = frameAudio.error ? frameAudio.error.code : '?';
+        console.log('[Audio] error code=' + code);
+        disconnect('error(code=' + code + ')');
+      }, { once: true });
+
+      // One-time gap seek: if the element stalls before any live data has played
+      // (init chunk at t=0 vs live clusters at t=elapsed), seek to the live range.
+      let _initialSeekDone = false;
+      function initialSeek() {
+        if (_initialSeekDone) return;
+        const len = frameAudio.buffered.length;
+        if (len > 1) {
+          _initialSeekDone = true;
+          const latestStart = frameAudio.buffered.start(len - 1);
+          if (frameAudio.currentTime < latestStart - 0.5) {
+            console.log('[Audio] Initial gap seek:', frameAudio.currentTime.toFixed(1), '→', latestStart.toFixed(1));
+            try { frameAudio.currentTime = latestStart; } catch (_) {}
+          }
+        }
+      }
+      frameAudio.addEventListener('stalled', initialSeek);
+      frameAudio.addEventListener('waiting', initialSeek);
+
+      frameAudio.src = '/webshare/audio?t=' + Date.now();
+      console.log('[Audio] Connecting via HTTP stream /webshare/audio');
+      // Start muted playback immediately so data is buffered before the user taps.
+      // Muted autoplay is permitted on Edge/Chrome Android without a user gesture.
+      // If the browser rejects it (stricter policy), the preload="auto" attribute
+      // will buffer passively and play() in the click handler will trigger loading.
+      frameAudio.play().catch(() => {});
+    }
+
+    // ── Video stream (H.264 fragmented MP4 / JPEG via /webshare/ws) ──────────
     function connect() {
       if (fatalError) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -72,10 +216,22 @@
       ws.onopen = () => { reconnectDelay = 1000; };
 
       ws.onmessage = (e) => {
-        // First message from server is always a JSON text config
-        if (!configured && typeof e.data === 'string') {
-          configured = true;
-          try { setupMode(JSON.parse(e.data), ws); } catch (_) {}
+        // All text frames are JSON control messages (config on connect, then
+        // server-initiated notifications such as audio-available).
+        if (typeof e.data === 'string') {
+          try {
+            const msg = JSON.parse(e.data);
+            if (!configured) {
+              configured = true;
+              setupMode(msg, ws);
+            } else if (msg.type === 'audio-available' && audioSupported) {
+              // Server has started receiving audio chunks — show the unmute
+              // button immediately without waiting for loadedmetadata (which
+              // is unreliable for live streams on Edge/Chrome Android).
+              audioAvailableFromServer = true;
+              if (!audioUnmuted) btnUnmute.style.display = 'block';
+            }
+          } catch (_) {}
           return;
         }
         if (mode === 'jpeg') {
@@ -98,27 +254,35 @@
     }
 
     function setupMode(cfg, ws) {
+      // If the server already has audio flowing when we connect, show the
+      // unmute button immediately (no need to wait for loadedmetadata).
+      if (cfg.audioAvailable && audioSupported) {
+        audioAvailableFromServer = true;
+        if (!audioUnmuted) btnUnmute.style.display = 'block';
+      }
       if (cfg.mode === 'jpeg') {
         mode = 'jpeg';
         frameJpeg.style.display = 'block';
         frameH264.style.display = 'none';
       } else if (cfg.mode === 'h264') {
-        const mimeType = `video/mp4; codecs="${cfg.codec}"`;
         if (!window.MediaSource) {
-          // Browser has no MSE at all — reconnecting will never help
           fatalError = true;
           overlay.textContent = 'Media Source Extensions are not supported in this browser. Ask the host to enable JPEG mode in Settings.';
           ws.close();
           return;
         }
+        // Video is always video-only. If server sends a combined codec (older build),
+        // strip the audio part — audio is delivered separately via /webshare/audio (HTTP).
+        const videoCodec = (cfg.codec || 'avc1.640028').split(',')[0].trim();
+        const mimeType = `video/mp4; codecs="${videoCodec}"`;
         if (!MediaSource.isTypeSupported(mimeType)) {
-          // Codec unsupported in this browser, but server may switch to JPEG — allow reconnect
           overlay.textContent = 'H.264 streaming is not supported in this browser. Ask the host to enable JPEG mode in Settings.';
           ws.close();
           return;
         }
         frameJpeg.style.display = 'none';
         frameH264.style.display = 'block';
+        frameH264.muted = true; // video is always silent; audio is on frameAudio
         setupMSE(mimeType);
         mode = 'h264'; // must be set AFTER setupMSE — teardownH264 inside resets mode to null
       }
@@ -138,7 +302,6 @@
       pendingChunks = [];
       mediaSource = new MediaSource();
       frameH264.src = URL.createObjectURL(mediaSource);
-      frameH264.play().catch(() => {});
 
       mediaSource.addEventListener('sourceopen', () => {
         try {
@@ -149,16 +312,16 @@
           return;
         }
 
+        frameH264.play().catch(() => {}); // muted video always allowed to autoplay
+
         sourceBuffer.addEventListener('updateend', () => {
           trimBuffer();
-          // Drain any queued chunks
           if (pendingChunks.length > 0 && !sourceBuffer.updating) {
             try { sourceBuffer.appendBuffer(pendingChunks.shift()); } catch (_) {}
           }
           overlay.classList.add('hidden');
         });
 
-        // Drain anything that arrived before sourceopen
         if (pendingChunks.length > 0 && !sourceBuffer.updating) {
           try { sourceBuffer.appendBuffer(pendingChunks.shift()); } catch (_) {}
         }
@@ -167,20 +330,15 @@
 
     function appendH264Chunk(chunk) {
       if (!sourceBuffer || !mediaSource || mediaSource.readyState !== 'open') {
-        // Cap the queue to ~4 s worth of frames (120 @ 30 fps) so we don't
-        // accumulate stale content when the SourceBuffer is slow to open.
         if (pendingChunks.length >= 120) pendingChunks.shift();
         pendingChunks.push(chunk);
         return;
       }
-      if (sourceBuffer.updating) {
-        pendingChunks.push(chunk);
-        return;
-      }
+      if (sourceBuffer.updating) { pendingChunks.push(chunk); return; }
       try {
         sourceBuffer.appendBuffer(chunk);
       } catch (_) {
-        pendingChunks = []; // clear on error (e.g. QuotaExceededError)
+        pendingChunks = [];
       }
     }
 
@@ -209,6 +367,7 @@
     }
 
     connect();
+    connectAudio();
 
     // Fullscreen toggle
     document.getElementById('btn-fs').addEventListener('click', () => {

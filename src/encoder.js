@@ -9,7 +9,6 @@ const MSE_CODEC_STRING = 'avc1.640028';
 
 function getFfmpegPath() {
   const base = require('ffmpeg-static');
-  // In a packaged ASAR, the binary is unpacked via asarUnpack config
   if (app.isPackaged) {
     return base.replace(/app\.asar[\\/]/g, 'app.asar.unpacked/');
   }
@@ -88,7 +87,8 @@ function keyframeInterval(fps) {
   return Math.max(1, Math.ceil(fps / 10));
 }
 
-// Spawn an ffmpeg process: reads raw BGRA frames on stdin, outputs fragmented MP4 on stdout
+// Spawn an ffmpeg process: reads raw BGRA frames on stdin, outputs fragmented MP4 on stdout.
+// Video-only; audio is captured separately via Electron's getDisplayMedia loopback.
 function spawnEncoder(codec, width, height, fps) {
   const ffmpegPath = getFfmpegPath();
   const kf = keyframeInterval(fps);
@@ -99,7 +99,7 @@ function spawnEncoder(codec, width, height, fps) {
     : [];
 
   const args = [
-    '-hide_banner', '-loglevel', 'error',   // suppress banner/progress; only real errors
+    '-hide_banner', '-loglevel', 'error',
     '-f', 'rawvideo', '-pix_fmt', 'bgra',
     '-s', `${width}x${height}`,
     '-r', String(fps),

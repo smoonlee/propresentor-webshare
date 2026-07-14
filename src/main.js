@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, webContents, session, dialog } = require('electron');
+const { app, BrowserWindow, Menu, globalShortcut, ipcMain, shell, webContents, session, desktopCapturer, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
 const dgram = require('dgram');
@@ -6,6 +6,7 @@ const https = require('https');
 const { createServer } = require('./server');
 const settings = require('./settings');
 const { detectCodec, spawnEncoder, MSE_CODEC_STRING } = require('./encoder');
+const QRCode = require('qrcode');
 
 // Fake fullscreen JS — injected into guest pages via executeJavaScript (bypasses CSP).
 // Replaces the Fullscreen API with a CSS-based visual fake so video fills the
@@ -185,6 +186,11 @@ function startH264CaptureLoop(wcId) {
     if (server) server.clearH264Init();
 
     ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps);
+
+    // Suppress write EOF errors on stdin — emitted asynchronously when ffmpeg
+    // exits while the capture loop is still writing frames to the pipe.
+    // The 'close' event on the process handles fallback/restart.
+    ffmpegProc.stdin.on('error', () => {});
 
     // Drain stderr so the OS pipe buffer never fills and blocks ffmpeg
     ffmpegProc.stderr.on('data', (d) => console.error('[Encoder]', d.toString().trimEnd()));
@@ -368,6 +374,7 @@ function sanitizeSettings(s) {
     allowNotifications: !!s.allowNotifications,
     streamMode: ['h264', 'jpeg'].includes(s.streamMode) ? s.streamMode : 'h264',
     hwEncoder: ['auto', 'nvenc', 'qsv', 'amf', 'software'].includes(s.hwEncoder) ? s.hwEncoder : 'auto',
+    audioEnabled: !!s.audioEnabled,
   };
 }
 
@@ -382,6 +389,48 @@ ipcMain.handle('save-settings', (_event, s) => {
 });
 
 ipcMain.handle('get-encoder-info', () => encoderInfo || null);
+
+// ── IPC: relay audio chunks (WebM/Opus) from renderer to WebSocket clients ──
+let _ipcAudioChunkCount = 0;
+
+ipcMain.on('audio-chunk', (_event, rawBuffer) => {
+  if (!server) return;
+  // Electron IPC delivers ArrayBuffer (which has .byteLength, not .length, and
+  // no index access). Convert to Node.js Buffer for consistent API.
+  const buffer = Buffer.from(rawBuffer);
+  _ipcAudioChunkCount++;
+  if (_ipcAudioChunkCount === 1) {
+    console.log('[Audio] First IPC chunk — size:', buffer.length);
+    // Notify video viewers immediately so the phone's unmute button appears
+    // without waiting for EBML detection or loadedmetadata.
+    server.setAudioFlowing();
+  } else if (_ipcAudioChunkCount % 50 === 0) {
+    console.log('[Audio] IPC chunk count:', _ipcAudioChunkCount, 'size:', buffer.length);
+  }
+  // WebM streams begin with an EBML header (magic bytes 1A 45 DF A3).
+  // Store the full first chunk as the init segment (replayed to late-joining viewers).
+  // Don't strip the cluster — the first chunk from MediaRecorder is typically
+  // just header (274B) with no or tiny cluster data; stripping risks corrupting it.
+  if (buffer && buffer.length >= 4 &&
+      buffer[0] === 0x1A && buffer[1] === 0x45 &&
+      buffer[2] === 0xDF && buffer[3] === 0xA3) {
+    console.log('[Audio] EBML init segment stored, size:', buffer.length);
+    server.setAudioInit(Buffer.from(buffer));
+  }
+  server.broadcastAudioChunk(buffer);
+});
+
+// ── IPC: generate QR code data URL for the viewer URL ──
+ipcMain.handle('get-qr-code', async () => {
+  const ip = await getLanIp();
+  const port = settings.get('port');
+  const url = `http://${ip}:${port}/webshare`;
+  try {
+    return await QRCode.toDataURL(url, { width: 200, margin: 2 });
+  } catch (_) {
+    return null;
+  }
+});
 
 ipcMain.on('apply-settings', (_event, s) => {
   // Apply live-changeable settings without restart (clamped to safe ranges)
@@ -471,6 +520,24 @@ app.whenReady().then(() => {
   if (app.isPackaged) {
     app.setLoginItemSettings({ openAtLogin: cfg.launchOnStartup });
   }
+
+  // Intercept getDisplayMedia() calls from the renderer.
+  // Use system-wide WASAPI loopback to capture audio from the default output device.
+  // This captures everything playing through the speakers, including the webview's audio.
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      if (!sources || sources.length === 0) {
+        console.warn('[Audio] No screen sources available');
+        callback({});
+        return;
+      }
+      console.log('[Audio] Using screen source:', sources[0].name, '+ WASAPI loopback');
+      callback({ video: sources[0], audio: 'loopback' });
+    }).catch((err) => {
+      console.error('[Audio] desktopCapturer.getSources failed:', err.message);
+      callback({});
+    });
+  }, { useSystemPicker: false });
   server = createServer(cfg.port, cfg.bindAddress);
   server.ready.catch((err) => {
     dialog.showErrorBox('Server failed to start', err.message);

@@ -266,3 +266,260 @@ test('clearLastFrame prevents cached frame being sent to new viewers', async (t)
   ]);
   assert.equal(received, false, 'should not receive a frame after clearLastFrame');
 });
+
+// ── Audio availability signalling (WebSocket) tests ───────────────────────────
+
+test('config message includes audioAvailable:false when no audio has started', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+  server.setMode('h264', 'avc1.640028');
+
+  const client = await wsConnectBuffered(`ws://127.0.0.1:${port}/webshare/ws`);
+  t.after(() => client.terminate());
+
+  const msg = await client.nextMessage();
+  const cfg = JSON.parse(msg.toString());
+  assert.equal(cfg.audioAvailable, false);
+});
+
+test('config message includes audioAvailable:true when audio init is already stored', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+  server.setMode('h264', 'avc1.640028');
+  // setAudioInit internally calls setAudioFlowing, setting audioFlowing = true
+  server.setAudioInit(Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0x01]));
+
+  const client = await wsConnectBuffered(`ws://127.0.0.1:${port}/webshare/ws`);
+  t.after(() => client.terminate());
+
+  const msg = await client.nextMessage();
+  const cfg = JSON.parse(msg.toString());
+  assert.equal(cfg.audioAvailable, true);
+});
+
+test('setAudioFlowing sets audioAvailable:true in config for new viewers', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+  server.setMode('h264', 'avc1.640028');
+  // Simulate first IPC chunk arriving (no EBML yet)
+  server.setAudioFlowing();
+
+  const client = await wsConnectBuffered(`ws://127.0.0.1:${port}/webshare/ws`);
+  t.after(() => client.terminate());
+
+  const msg = await client.nextMessage();
+  const cfg = JSON.parse(msg.toString());
+  assert.equal(cfg.audioAvailable, true);
+});
+
+test('setAudioFlowing broadcasts audio-available to connected video viewers', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+  server.setMode('h264', 'avc1.640028');
+
+  const client = await wsConnectBuffered(`ws://127.0.0.1:${port}/webshare/ws`);
+  t.after(() => client.terminate());
+  await client.nextMessage(); // consume config
+
+  server.setAudioFlowing();
+
+  const notification = await client.nextMessage();
+  const msg = JSON.parse(notification.toString());
+  assert.equal(msg.type, 'audio-available');
+});
+
+test('setAudioFlowing is idempotent — only one notification is sent', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+  server.setMode('h264', 'avc1.640028');
+
+  const client = await wsConnectBuffered(`ws://127.0.0.1:${port}/webshare/ws`);
+  t.after(() => client.terminate());
+  await client.nextMessage(); // consume config
+
+  server.setAudioFlowing(); // first call — should broadcast
+  const first = await client.nextMessage();
+  assert.equal(JSON.parse(first.toString()).type, 'audio-available');
+
+  server.setAudioFlowing(); // second call — should be silent
+  const extra = await Promise.race([
+    client.nextMessage(200).then(() => true).catch(() => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), 200)),
+  ]);
+  assert.equal(extra, false, 'setAudioFlowing must not broadcast a second time');
+});
+
+test('setAudioInit broadcasts audio-available to connected video viewers', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+  server.setMode('h264', 'avc1.640028');
+
+  const client = await wsConnectBuffered(`ws://127.0.0.1:${port}/webshare/ws`);
+  t.after(() => client.terminate());
+
+  // Consume the config message first
+  await client.nextMessage();
+
+  // Trigger the first audio init — should broadcast audio-available
+  server.setAudioInit(Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0x01]));
+
+  const notification = await client.nextMessage();
+  const msg = JSON.parse(notification.toString());
+  assert.equal(msg.type, 'audio-available');
+});
+
+test('setAudioInit restart does NOT broadcast audio-available again', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+  server.setMode('h264', 'avc1.640028');
+
+  // Pre-store an init chunk so the next setAudioInit is treated as a restart
+  server.setAudioInit(Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0x01]));
+
+  const client = await wsConnectBuffered(`ws://127.0.0.1:${port}/webshare/ws`);
+  t.after(() => client.terminate());
+
+  // Consume config (audioAvailable: true)
+  await client.nextMessage();
+
+  // Trigger a restart — should NOT send another audio-available
+  server.setAudioInit(Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0x02]));
+
+  const extra = await Promise.race([
+    client.nextMessage(200).then(() => true).catch(() => false),
+    new Promise((resolve) => setTimeout(() => resolve(false), 200)),
+  ]);
+  assert.equal(extra, false, 'no audio-available should be sent on stream restart');
+});
+
+// ── Audio HTTP endpoint tests ─────────────────────────────────────────────────
+
+// Collect exactly n bytes from an HTTP response then destroy the request.
+function readNBytes(url, n, timeoutMs = 2000) {
+  return new Promise((resolve, reject) => {
+    const parts = [];
+    let total = 0;
+    const timer = setTimeout(() => {
+      req.destroy();
+      reject(new Error(`Timeout: expected ${n} bytes, got ${total}`));
+    }, timeoutMs);
+    const req = http.get(url, (res) => {
+      resolve._statusCode = res.statusCode;
+      resolve._headers    = res.headers;
+      res.on('data', (chunk) => {
+        parts.push(chunk);
+        total += chunk.length;
+        if (total >= n) {
+          clearTimeout(timer);
+          req.destroy();
+          resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(parts).slice(0, n) });
+        }
+      });
+      res.on('error', () => {});
+    });
+    req.on('error', (e) => {
+      if (e.code !== 'ECONNRESET') { clearTimeout(timer); reject(e); }
+    });
+  });
+}
+
+// Open an HTTP connection, capture headers, then immediately destroy it.
+function headRequest(url, timeoutMs = 2000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { req.destroy(); reject(new Error('Timeout')); }, timeoutMs);
+    const req = http.get(url, (res) => {
+      clearTimeout(timer);
+      req.destroy();
+      resolve({ status: res.statusCode, headers: res.headers });
+    });
+    req.on('error', (e) => {
+      if (e.code !== 'ECONNRESET') { clearTimeout(timer); reject(e); }
+    });
+  });
+}
+
+test('/webshare/audio: returns 200 with audio/webm content-type', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const { status, headers } = await headRequest(`http://127.0.0.1:${port}/webshare/audio`);
+  assert.equal(status, 200);
+  assert.equal(headers['content-type'], 'audio/webm');
+  assert.equal(headers['accept-ranges'], 'none');
+});
+
+test('/webshare/audio: replays stored EBML init chunk to connecting viewer', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const initChunk = Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0x01, 0x02, 0x03, 0x04]);
+  server.setAudioInit(initChunk);
+
+  const { body } = await readNBytes(
+    `http://127.0.0.1:${port}/webshare/audio`,
+    initChunk.length,
+  );
+  assert.deepEqual(body, initChunk);
+});
+
+test('/webshare/audio: broadcasts subsequent chunks to connected viewers', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const audioChunk = Buffer.from([0x18, 0x53, 0x80, 0x67, 0x0A, 0x0B, 0x0C, 0x0D]);
+
+  const received = readNBytes(`http://127.0.0.1:${port}/webshare/audio`, audioChunk.length);
+  // Give the connection time to register before broadcasting
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  server.broadcastAudioChunk(audioChunk);
+
+  const { body } = await received;
+  assert.deepEqual(body, audioChunk);
+});
+
+test('/webshare/audio: setAudioInit on restart closes existing HTTP viewers', async (t) => {
+  const server = createServer(0, '127.0.0.1');
+  await server.ready;
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const init1 = Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0xAA]);
+  server.setAudioInit(init1);
+
+  // Connect a viewer and drain the init segment
+  const ended = await new Promise((resolve, reject) => {
+    const req = http.get(`http://127.0.0.1:${port}/webshare/audio`, (res) => {
+      res.on('data', () => {});
+      res.on('end', () => resolve(true));
+      res.on('error', () => resolve(true)); // destroyed connection also resolves
+    });
+    req.on('error', (e) => { if (e.code !== 'ECONNRESET') reject(e); else resolve(true); });
+    // Simulate a capture restart after the viewer has connected
+    setTimeout(() => {
+      const init2 = Buffer.from([0x1A, 0x45, 0xDF, 0xA3, 0xBB]);
+      server.setAudioInit(init2); // should close existing HTTP clients
+    }, 100);
+    setTimeout(() => { req.destroy(); resolve(false); }, 2000);
+  });
+  assert.equal(ended, true, 'existing HTTP viewer should be closed on stream restart');
+});
