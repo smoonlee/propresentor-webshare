@@ -98,12 +98,12 @@
     #settings-panel {
       position: absolute;
       top: 0; right: 0; bottom: 0;
-      width: 380px;
+      width: 400px;
       max-width: 90vw;
-      background: #1a1a2e;
-      border-left: 1px solid #0f3460;
+      background: #131827;
+      border-left: 1px solid #1a2a4a;
       overflow-y: auto;
-      padding: 20px 24px;
+      padding: 20px 18px 28px;
       transform: translateX(100%);
       transition: transform 0.25s ease;
     }
@@ -111,10 +111,12 @@
       transform: translateX(0);
     }
     #settings-panel h2 {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 600;
-      color: #fff;
-      margin-bottom: 20px;
+      color: #e8edf5;
+      margin-bottom: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #1e3158;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -122,54 +124,58 @@
     #settings-panel h2 .close-btn {
       background: none;
       border: none;
-      color: #888;
+      color: #5a7090;
       font-size: 20px;
       cursor: pointer;
       padding: 2px 6px;
       border-radius: 4px;
     }
-    #settings-panel h2 .close-btn:hover { color: #fff; background: #0f3460; }
+    #settings-panel h2 .close-btn:hover { color: #e8edf5; background: rgba(91,141,217,0.12); }
     .s-section {
-      margin-bottom: 20px;
+      margin-bottom: 8px;
+      background: rgba(255,255,255,0.028);
+      border-radius: 8px;
+      padding: 12px 14px;
     }
     .s-section h3 {
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 10px;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: #e94560;
-      margin-bottom: 10px;
+      letter-spacing: 1.2px;
+      color: #5b8dd9;
+      margin-bottom: 12px;
       padding-bottom: 5px;
-      border-bottom: 1px solid #0f3460;
+      border-bottom: 1px solid rgba(91,141,217,0.18);
     }
     .s-field {
       display: flex;
       align-items: center;
-      gap: 10px;
-      margin-bottom: 12px;
+      gap: 12px;
+      margin-bottom: 10px;
     }
     .s-field > label:first-child {
-      width: 120px;
+      width: 135px;
       flex-shrink: 0;
-      font-size: 12px;
-      color: #ccc;
+      font-size: 13px;
+      color: #bbc4d8;
     }
     .s-field input[type="text"],
     .s-field input[type="number"] {
       flex: 1;
-      padding: 6px 8px;
-      border: 1px solid #0f3460;
-      border-radius: 5px;
-      background: #16213e;
-      color: #e0e0e0;
+      padding: 7px 10px;
+      border: 1px solid #1e3460;
+      border-radius: 6px;
+      background: #0f1928;
+      color: #e0e6f0;
       font-size: 12px;
       outline: none;
     }
-    .s-field input:focus { border-color: #e94560; }
+    .s-field input:focus { border-color: #5b8dd9; box-shadow: 0 0 0 2px rgba(91,141,217,0.15); }
     .s-field .s-hint {
       font-size: 10px;
-      color: #555;
+      color: #4e637f;
     }
+    .s-field .s-toggle { margin-left: auto; flex-shrink: 0; }
     /* Toggle – pill switch with ON/OFF labels */
     .s-toggle {
       position: relative;
@@ -223,22 +229,23 @@
     .s-actions {
       display: flex;
       gap: 8px;
-      margin-top: 20px;
+      margin-top: 16px;
       padding-top: 14px;
-      border-top: 1px solid #0f3460;
+      border-top: 1px solid #1e3158;
     }
     .s-btn {
-      padding: 7px 18px;
+      padding: 8px 18px;
       border: none;
-      border-radius: 5px;
+      border-radius: 6px;
       font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.15s, color 0.15s;
     }
     .s-btn-primary { background: #e94560; color: #fff; }
     .s-btn-primary:hover { background: #c73a52; }
-    .s-btn-ghost { background: transparent; color: #888; border: 1px solid #333; }
-    .s-btn-ghost:hover { background: #16213e; color: #ccc; }
+    .s-btn-ghost { background: transparent; color: #7a90b4; border: 1px solid #2a3a5a; }
+    .s-btn-ghost:hover { background: rgba(91,141,217,0.08); color: #c0cfe8; border-color: #3a5080; }
     .s-restart {
       display: none;
       margin-top: 12px;
@@ -309,6 +316,65 @@
     #diag-overlay .diag-val { color: #4caf50; font-weight: 600; }
     #diag-overlay .diag-val.warn { color: #e9a560; }
     #diag-overlay .diag-val.bad { color: #e94560; }
+
+    /* ── Update banner ── */
+    #update-banner {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px;
+      background: #2a1a00;
+      border-bottom: 1px solid #e9a560;
+      font-size: 12px;
+      color: #e9a560;
+      flex-shrink: 0;
+    }
+    #update-banner.visible { display: flex; }
+    #update-banner .update-msg { flex: 1; }
+    #update-banner .update-btn {
+      padding: 3px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+    }
+    #update-banner .update-download { background: #e9a560; color: #1a1a2e; }
+    #update-banner .update-download:hover { background: #f0b970; }
+    #update-banner .update-dismiss { background: none; color: #666; font-size: 15px; padding: 0 4px; }
+    #update-banner .update-dismiss:hover { color: #ccc; }
+    /* ── QR code popover ── */
+    #qr-popover {
+      display: none;
+      position: fixed;
+      bottom: 36px; right: 12px;
+      z-index: 300;
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    #qr-popover.visible { display: block; }
+    #qr-popover img { display: block; width: 160px; height: 160px; border-radius: 4px; }
+    #qr-popover .qr-label {
+      margin-top: 6px;
+      font-size: 10px;
+      color: #555;
+      text-align: center;
+      word-break: break-all;
+    }
+    #btn-qr {
+      padding: 2px 7px;
+      border: 1px solid #2a3a5c;
+      border-radius: 4px;
+      background: transparent;
+      color: #6ca0dc;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.4px;
+    }
+    #btn-qr:hover { background: rgba(108,160,220,0.12); border-color: #6ca0dc; }
   </style>
 </head>
 <body>
@@ -325,9 +391,16 @@
     <button class="btn" id="btn-settings" title="Settings">&#9881;</button>
   </div>
 
+  <!-- Update available banner -->
+  <div id="update-banner">
+    <span class="update-msg" id="update-msg"></span>
+    <button class="update-btn update-download" id="update-download">Download</button>
+    <button class="update-btn update-dismiss" id="update-dismiss" title="Dismiss">&times;</button>
+  </div>
+
   <!-- WebView (interactive for the operator) -->
   <div id="webview-container">
-    <webview id="webview" src="about:blank" allowpopups></webview>
+    <webview id="webview" src="about:blank"></webview>
   </div>
 
   <!-- Status bar -->
@@ -335,6 +408,13 @@
     <span id="viewer-count">0 viewers</span>
     <span class="spacer"></span>
     <a href="#" id="server-url" style="color:#6ca0dc;text-decoration:underline;cursor:pointer;">loading…</a>
+    <button id="btn-qr" title="Show QR code for viewer URL">QR</button>
+  </div>
+
+  <!-- QR code popover -->
+  <div id="qr-popover">
+    <img id="qr-img" alt="QR code" />
+    <div class="qr-label" id="qr-label"></div>
   </div>
 
   <!-- Diagnostics overlay -->
@@ -389,6 +469,29 @@
       </div>
 
       <div class="s-section">
+        <h3>Streaming</h3>
+        <div class="s-field">
+          <label for="s-stream-mode">Mode</label>
+          <select id="s-stream-mode" style="flex:1;padding:7px 10px;border:1px solid #1e3460;border-radius:6px;background:#0f1928;color:#e0e6f0;font-size:12px;outline:none;cursor:pointer;">
+            <option value="h264">H.264 (hardware)</option>
+            <option value="jpeg">JPEG (compatible)</option>
+          </select>
+        </div>
+        <div class="s-field">
+          <label>Encoder</label>
+          <span id="s-encoder-label" style="font-size:12px;color:#aaa;flex:1">Detecting…</span>
+        </div>
+        <div class="s-field">
+          <label>Audio loopback</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-audio-enabled" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div style="font-size:10px;color:#4e637f;margin-top:-4px;padding:0 0 6px;">Captures all system audio from the Windows default playback device</div>
+      </div>
+
+      <div class="s-section">
         <h3>Startup</h3>
         <div class="s-field">
           <label for="s-startup-url">Auto-load URL</label>
@@ -398,6 +501,13 @@
           <label>Always on top</label>
           <label class="s-toggle">
             <input type="checkbox" id="s-aot" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="s-field">
+          <label>Launch on startup</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-launch-startup" />
             <span class="slider"></span>
           </label>
         </div>
@@ -411,6 +521,40 @@
             <input type="checkbox" id="s-diag" />
             <span class="slider"></span>
           </label>
+        </div>
+      </div>
+
+      <div class="s-section">
+        <h3>Permissions</h3>
+        <div class="s-field">
+          <label>Camera / microphone</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-allow-media" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="s-field">
+          <label>Location</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-allow-geo" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="s-field">
+          <label>Notifications</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-allow-notif" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="s-section">
+        <h3>About</h3>
+        <div class="s-field">
+          <label>Version</label>
+          <span id="s-version" style="font-size:12px;color:#aaa;flex:1">—</span>
+          <button class="s-btn s-btn-ghost" id="s-check-updates" style="font-size:11px;padding:4px 10px;">Check for updates</button>
         </div>
       </div>
 
@@ -489,34 +633,153 @@
     let settingsOrigQuality = null;
 
     const sFields = {
-      port:        document.getElementById('s-port'),
-      bind:        document.getElementById('s-bind'),
-      fps:         document.getElementById('s-fps'),
-      quality:     document.getElementById('s-quality'),
-      startupUrl:  document.getElementById('s-startup-url'),
-      aot:         document.getElementById('s-aot'),
-      diag:        document.getElementById('s-diag'),
+      port:          document.getElementById('s-port'),
+      bind:          document.getElementById('s-bind'),
+      fps:           document.getElementById('s-fps'),
+      quality:       document.getElementById('s-quality'),
+      startupUrl:    document.getElementById('s-startup-url'),
+      aot:           document.getElementById('s-aot'),
+      launchStartup: document.getElementById('s-launch-startup'),
+      diag:          document.getElementById('s-diag'),
+      allowMedia:    document.getElementById('s-allow-media'),
+      allowGeo:      document.getElementById('s-allow-geo'),
+      allowNotif:    document.getElementById('s-allow-notif'),
+      streamMode:    document.getElementById('s-stream-mode'),
+      audioEnabled:  document.getElementById('s-audio-enabled'),
     };
 
+    // ── Audio capture via WASAPI loopback ──
+    // getDisplayMedia + setDisplayMediaRequestHandler provides system audio.
+    // Encoded as WebM/Opus via MediaRecorder and relayed to viewers over HTTP.
+    let audioMediaRecorder = null;
+    let audioStream = null;
+    let _audioCapturePending = false; // prevents concurrent getDisplayMedia calls
+    let _audioChunkCount = 0;
+
+    async function startAudioCapture() {
+      if (audioMediaRecorder || _audioCapturePending) return;
+      _audioCapturePending = true;
+      console.log('[Audio] startAudioCapture: calling getDisplayMedia');
+      try {
+        // getDisplayMedia — setDisplayMediaRequestHandler in main.js intercepts
+        // this and provides audio:'loopback' (WASAPI system audio capture).
+        const ms = await navigator.mediaDevices.getDisplayMedia({
+          audio: true,
+          video: { width: 1, height: 1, frameRate: 1 },
+        });
+        const audioTracks = ms.getAudioTracks();
+        const videoTracks = ms.getVideoTracks();
+        console.log('[Audio] getDisplayMedia succeeded —', {
+          audioTracks: audioTracks.map(t => ({ label: t.label, readyState: t.readyState, muted: t.muted })),
+          videoTracks: videoTracks.map(t => ({ label: t.label, readyState: t.readyState })),
+        });
+        const audioTrack = audioTracks[0];
+        if (!audioTrack) {
+          console.warn('[Audio] No audio track in MediaStream — loopback may be unsupported');
+          _audioCapturePending = false;
+          ms.getTracks().forEach(t => t.stop()); return;
+        }
+        console.log('[Audio] Track:', audioTrack.label || '(no label)', '| muted:', audioTrack.muted, '| readyState:', audioTrack.readyState);
+        // Keep the full stream (ms) alive so the video tracks preserve the WASAPI
+        // loopback session on Windows.
+        audioStream = ms;
+        _audioChunkCount = 0;
+
+        const recorder = new MediaRecorder(new MediaStream([audioTrack]), {
+          mimeType: 'audio/webm;codecs=opus',
+          audioBitsPerSecond: 128000,
+        });
+        recorder.ondataavailable = async (e) => {
+          if (e.data.size > 0) {
+            _audioChunkCount++;
+            if (_audioChunkCount === 1 || _audioChunkCount % 50 === 0) {
+              console.log('[Audio] Chunk #' + _audioChunkCount + ' size=' + e.data.size + 'B');
+            }
+            try { api.sendAudioChunk(await e.data.arrayBuffer()); } catch (_) {}
+          }
+        };
+        recorder.onstop = () => {
+          audioMediaRecorder = null;
+          if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+        };
+        recorder.onerror = (e) => {
+          console.error('[Audio] MediaRecorder error:', e.error || e);
+          audioMediaRecorder = null;
+          if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+        };
+        // Use timeslice=960 (960ms = 48 Opus frames at 20ms each).
+        // This aligns WebM Cluster boundaries with complete Opus frame groups,
+        // preventing the "watery" artefact caused by mid-frame cluster splits.
+        // Values below ~500ms cause audible boundary artefacts; 960ms gives
+        // clean encoding with acceptable ~1s delivery latency.
+        recorder.start(960);
+        console.log('[Audio] MediaRecorder started, state:', recorder.state);
+        _audioCapturePending = false;
+        audioMediaRecorder = recorder;
+      } catch (err) {
+        console.error('[Audio] startAudioCapture failed:', err);
+        _audioCapturePending = false;
+        audioMediaRecorder = null;
+        audioStream = null;
+      }
+    }
+
+    function stopAudioCapture() {
+      _audioCapturePending = false;
+      if (audioMediaRecorder) {
+        try { audioMediaRecorder.stop(); } catch (_) {}
+        audioMediaRecorder = null;
+      }
+      if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+    }
+
+    sFields.audioEnabled.addEventListener('change', () => {
+      const on = sFields.audioEnabled.checked;
+      if (!on) stopAudioCapture();
+    });
+
+    sFields.streamMode.addEventListener('change', () => {
+      const isH264 = sFields.streamMode.value === 'h264';
+      sFields.audioEnabled.disabled = !isH264;
+      if (!isH264) {
+        sFields.audioEnabled.checked = false;
+        stopAudioCapture();
+      }
+    });
+
     function populateSettings(s) {
-      sFields.port.value       = s.port;
-      sFields.bind.value       = s.bindAddress;
-      sFields.fps.value        = s.captureFps;
-      sFields.quality.value    = s.jpegQuality;
-      sFields.startupUrl.value = s.startupUrl || '';
-      sFields.aot.checked      = s.alwaysOnTop;
-      sFields.diag.checked     = s.showDiagnostics;
+      sFields.port.value              = s.port;
+      sFields.bind.value              = s.bindAddress;
+      sFields.fps.value               = s.captureFps;
+      sFields.quality.value           = s.jpegQuality;
+      sFields.startupUrl.value        = s.startupUrl || '';
+      sFields.aot.checked             = s.alwaysOnTop;
+      sFields.launchStartup.checked   = !!s.launchOnStartup;
+      sFields.diag.checked            = s.showDiagnostics;
+      sFields.allowMedia.checked      = !!s.allowMedia;
+      sFields.allowGeo.checked        = !!s.allowGeolocation;
+      sFields.allowNotif.checked      = !!s.allowNotifications;
+      sFields.streamMode.value        = s.streamMode || 'h264';
+      const isH264 = (s.streamMode || 'h264') === 'h264';
+      sFields.audioEnabled.disabled   = !isH264;
+      sFields.audioEnabled.checked    = !!s.audioEnabled && isH264;
     }
 
     function collectSettings() {
       return {
-        port:         Math.max(1024, Math.min(65535, parseInt(sFields.port.value, 10) || 4983)),
-        bindAddress:  sFields.bind.value.trim() || '0.0.0.0',
-        captureFps:   Math.max(1, Math.min(60, parseInt(sFields.fps.value, 10) || 12)),
-        jpegQuality:  Math.max(10, Math.min(100, parseInt(sFields.quality.value, 10) || 70)),
-        startupUrl:   sFields.startupUrl.value.trim(),
-        alwaysOnTop:  sFields.aot.checked,
-        showDiagnostics: sFields.diag.checked,
+        port:               Math.max(1024, Math.min(65535, parseInt(sFields.port.value, 10) || 4983)),
+        bindAddress:        sFields.bind.value.trim() || '0.0.0.0',
+        captureFps:         Math.max(1, Math.min(60, parseInt(sFields.fps.value, 10) || 30)),
+        jpegQuality:        Math.max(10, Math.min(100, parseInt(sFields.quality.value, 10) || 70)),
+        startupUrl:         sFields.startupUrl.value.trim(),
+        alwaysOnTop:        sFields.aot.checked,
+        launchOnStartup:    sFields.launchStartup.checked,
+        showDiagnostics:    sFields.diag.checked,
+        allowMedia:         sFields.allowMedia.checked,
+        allowGeolocation:   sFields.allowGeo.checked,
+        allowNotifications: sFields.allowNotif.checked,
+        streamMode:         sFields.streamMode.value || 'h264',
+        audioEnabled:       sFields.audioEnabled.checked,
       };
     }
 
@@ -529,6 +792,11 @@
         populateSettings(s);
         document.getElementById('s-restart').classList.remove('visible');
         settingsOverlay.classList.add('open');
+      });
+      // Populate encoder label from cached info
+      api.getEncoderInfo().then((info) => {
+        document.getElementById('s-encoder-label').textContent =
+          info ? info.label : (sFields.streamMode.value === 'jpeg' ? 'N/A' : 'Detecting…');
       });
     }
 
@@ -550,9 +818,11 @@
     document.getElementById('s-save').addEventListener('click', async () => {
       const s = collectSettings();
       await api.saveSettings(s);
+      const restartEl = document.getElementById('s-restart');
+      restartEl.classList.remove('visible');
       const needsRestart = s.port !== settingsOrigPort || s.bindAddress !== settingsOrigBind;
       if (needsRestart) {
-        const el = document.getElementById('s-restart');
+        const el = restartEl;
         el.classList.add('visible');
         // Re-trigger pulse animation
         el.style.animation = 'none';
@@ -560,6 +830,14 @@
         el.style.animation = '';
       }
       api.applySettings(s);
+      // Start/stop audio capture immediately so the user doesn't have to reload
+      // the webview after toggling the Audio loopback setting.
+      const isH264 = (s.streamMode || 'h264') === 'h264';
+      if (s.audioEnabled && isH264) {
+        startAudioCapture(); // no-op if already running
+      } else {
+        stopAudioCapture();
+      }
       // Reload webview when capture settings change so the new quality/fps is visible
       const captureChanged = s.captureFps !== settingsOrigFps || s.jpegQuality !== settingsOrigQuality;
       if (captureChanged && webview.src && webview.src !== 'about:blank') {
@@ -576,9 +854,13 @@
       populateSettings(defaults);
     });
 
-    // ESC to close
+    // ESC to close, Enter to save
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && settingsOverlay.classList.contains('open')) closeSettings();
+      if (!settingsOverlay.classList.contains('open')) return;
+      if (e.key === 'Escape') { closeSettings(); return; }
+      if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
+        document.getElementById('s-save').click();
+      }
     });
 
     // React to live settings changes
@@ -602,6 +884,33 @@
       btnPin.textContent = pinned ? 'Pinned' : 'Pin';
     });
 
+    /* ── Early audio capture start ── */
+    // Pre-warm the Windows audio endpoint IMMEDIATELY (before settings are read)
+    // so WASAPI loopback sees an active render endpoint from the very start.
+    // This runs in parallel with the async settings read below.
+    (function preWarmAudio() {
+      try {
+        const ctx = new AudioContext();
+        // Use white noise (broad spectrum) — more effective at waking WASAPI
+        // than a single-frequency oscillator. Volume is imperceptible.
+        const buf = ctx.createBuffer(1, ctx.sampleRate * 0.3, ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.001;
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start();
+        src.onended = () => ctx.close();
+      } catch (_) {}
+    })();
+
+    // Start WASAPI capture as early as possible — overlaps with pre-warm above.
+    api.getSettings().then((s) => {
+      if (s.audioEnabled && (s.streamMode || 'h264') === 'h264') {
+        startAudioCapture();
+      }
+    });
+
     /* ── Webview events ── */
     webview.addEventListener('dom-ready', () => {
       // Start live capture once content is rendered
@@ -623,10 +932,13 @@
       urlInput.value = e.url;
     });
 
+    webview.addEventListener('new-window', (e) => {
+      api.openExternal(e.url);
+    });
+
     webview.addEventListener('crashed', () => {
       urlInput.value = '';
       webview.src = 'about:blank';
-      alert('The page crashed. It has been reset to a blank page.');
     });
 
     /* ── Auto-load startup URL (wait for preload + webview ready) ── */
@@ -644,15 +956,44 @@
     }, 2000);
 
     /* ── Show server URL (clickable) ── */
+    let serverViewerUrl = '';
     Promise.all([api.getPort(), api.getLanIp()]).then(([port, lanIp]) => {
-      const url = 'http://' + lanIp + ':' + port + '/webshare';
-      serverUrlEl.textContent = url;
+      serverViewerUrl = 'http://' + lanIp + ':' + port + '/webshare';
+      serverUrlEl.textContent = serverViewerUrl;
       serverUrlEl.addEventListener('click', (e) => {
         e.preventDefault();
-        navigator.clipboard.writeText(url).catch(() => {});
-        api.openExternal(url);
+        navigator.clipboard.writeText(serverViewerUrl).catch(() => {});
+        api.openExternal(serverViewerUrl);
       });
       document.getElementById('diag-lan-ip').textContent = lanIp;
+    });
+
+    /* ── QR code popover ── */
+    const qrPopover = document.getElementById('qr-popover');
+    const btnQr     = document.getElementById('btn-qr');
+    let qrLoaded = false;
+
+    btnQr.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (qrPopover.classList.contains('visible')) {
+        qrPopover.classList.remove('visible');
+        return;
+      }
+      if (!qrLoaded) {
+        const dataUrl = await api.getQrCode();
+        if (dataUrl) {
+          document.getElementById('qr-img').src = dataUrl;
+          document.getElementById('qr-label').textContent = serverViewerUrl;
+          qrLoaded = true;
+        }
+      }
+      qrPopover.classList.add('visible');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!qrPopover.contains(e.target) && e.target !== btnQr) {
+        qrPopover.classList.remove('visible');
+      }
     });
 
     /* ── Diagnostics overlay ── */
@@ -734,6 +1075,41 @@
       document.getElementById('diag-uptime').textContent =
         (h > 0 ? h + 'h ' : '') + (m > 0 || h > 0 ? m + 'm ' : '') + s + 's';
     }
+    /* ── Update available banner ── */
+    api.onUpdateAvailable(({ version, url }) => {
+      document.getElementById('update-msg').textContent =
+        `ProPresenter WebShare ${version} is available.`;
+      document.getElementById('update-download').onclick = () => api.openExternal(url);
+      document.getElementById('update-dismiss').onclick = () =>
+        document.getElementById('update-banner').classList.remove('visible');
+      document.getElementById('update-banner').classList.add('visible');
+    });
+
+    /* ── Encoder detection notification ── */
+    api.onEncoderDetected((info) => {
+      document.getElementById('s-encoder-label').textContent = info.label;
+    });
+
+    /* ── About: version + manual update check ── */
+    api.getVersion().then(v => {
+      document.getElementById('s-version').textContent = 'v' + v;
+    });
+
+    document.getElementById('s-check-updates').addEventListener('click', async () => {
+      const btn = document.getElementById('s-check-updates');
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+      const result = await api.checkForUpdates();
+      if (result.available) {
+        btn.textContent = 'Update available!';
+      } else {
+        btn.textContent = 'Up to date ✓';
+      }
+      setTimeout(() => {
+        btn.textContent = 'Check for updates';
+        btn.disabled = false;
+      }, 3000);
+    });
   </script>
 </body>
 </html>

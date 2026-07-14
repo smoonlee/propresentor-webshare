@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleAlwaysOnTop: () => ipcRenderer.send('toggle-always-on-top'),
   getAlwaysOnTop: () => ipcRenderer.invoke('get-always-on-top'),
   onAlwaysOnTopChanged: (cb) => {
+    ipcRenderer.removeAllListeners('always-on-top-changed');
     ipcRenderer.on('always-on-top-changed', (_e, val) => cb(val));
   },
 
@@ -31,12 +32,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveSettings: (s) => ipcRenderer.invoke('save-settings', s),
   applySettings: (s) => ipcRenderer.send('apply-settings', s),
   onToggleSettings: (cb) => {
+    ipcRenderer.removeAllListeners('toggle-settings');
     ipcRenderer.on('toggle-settings', () => cb());
   },
   onSettingsChanged: (cb) => {
+    ipcRenderer.removeAllListeners('settings-changed');
     ipcRenderer.on('settings-changed', (_e, val) => cb(val));
   },
 
   // Diagnostics
   getDiagnostics: () => ipcRenderer.invoke('get-diagnostics'),
+
+  // App version & update check
+  getVersion: () => ipcRenderer.invoke('get-version'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+
+  // Update notifications
+  onUpdateAvailable: (cb) => {
+    ipcRenderer.removeAllListeners('update-available');
+    ipcRenderer.on('update-available', (_e, info) => cb(info));
+  },
+
+  // Encoder detection
+  getEncoderInfo: () => ipcRenderer.invoke('get-encoder-info'),
+  onEncoderDetected: (cb) => {
+    ipcRenderer.removeAllListeners('encoder-detected');
+    ipcRenderer.on('encoder-detected', (_e, info) => cb(info));
+  },
+
+  // Send a WebM/Opus audio chunk captured in the renderer to the main process
+  sendAudioChunk: (data) => ipcRenderer.send('audio-chunk', data),
+
+  // QR code data URL for viewer URL
+  getQrCode: () => ipcRenderer.invoke('get-qr-code'),
 });
