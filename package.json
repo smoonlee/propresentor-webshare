@@ -52,7 +52,6 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "ProPresenter WebShare",
-      "publisherName": "smoonlee",
       "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}"
     }
   },
