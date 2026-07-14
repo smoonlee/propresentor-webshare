@@ -10,8 +10,8 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ### Changed
 
-- **Native audio loopback via Electron `getDisplayMedia`** — removed all ffmpeg-based audio capture (WASAPI / DirectShow). Audio is now captured entirely through Chromium's built-in WASAPI loopback by calling `navigator.mediaDevices.getDisplayMedia({ audio: true })` in the Electron renderer; `session.setDisplayMediaRequestHandler` intercepts the call and provides `audio: 'loopback'` without any system dialog. Encoded as WebM/Opus using the browser's native `MediaRecorder` (500 ms chunks) and relayed to a separate WebSocket path (`/webshare/ws-audio`). No external software, no virtual audio cable, and no system-installed ffmpeg required. iOS Safari does not support `audio/webm;codecs=opus` in MSE and will receive video only.
-- **Separate audio WebSocket** — browser viewers connect to `/webshare/ws-audio` for audio and receive a "Tap to enable audio" button once the first audio chunk arrives. Video (`/webshare/ws`) is unchanged.
+- **Native audio loopback via Electron `getDisplayMedia`** — removed all ffmpeg-based audio capture (WASAPI / DirectShow). Audio is now captured entirely through Chromium's built-in WASAPI loopback by calling `navigator.mediaDevices.getDisplayMedia({ audio: true })` in the Electron renderer; `session.setDisplayMediaRequestHandler` intercepts the call and provides `audio: 'loopback'` without any system dialog. Encoded as WebM/Opus using the browser's native `MediaRecorder` (500 ms chunks) and relayed to browsers via HTTP chunked streaming (`/webshare/audio`). No external software, no virtual audio cable, and no system-installed ffmpeg required. Safari/iOS does not support `audio/webm;codecs=opus` and will receive video only.
+- **Separate audio HTTP stream** — browser viewers connect to `/webshare/audio` (HTTP chunked) for audio and receive a “Tap to enable audio” button once the EBML init segment is parsed. Video (`/webshare/ws`) is unchanged.
 - **Audio device dropdown removed** — the device-selection UI is no longer needed; only an Audio loopback ON/OFF toggle remains.
 
 ### Fixed

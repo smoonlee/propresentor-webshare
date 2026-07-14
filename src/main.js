@@ -333,6 +333,7 @@ ipcMain.handle('get-diagnostics', () => {
     viewers: server ? server.getViewerCount() : 0,
     memoryMB: mem.rss / (1024 * 1024),
     skippedFrames: diagSkippedInSec,
+    audioChunks: _ipcAudioChunkCount,
   };
 });
 
@@ -390,29 +391,87 @@ ipcMain.handle('save-settings', (_event, s) => {
 
 ipcMain.handle('get-encoder-info', () => encoderInfo || null);
 
+// Strip the first Cluster element from a WebM init chunk, keeping only the
+// EBML metadata (EBML + Segment + Info + Tracks, no audio data).
+// Without this, the stored init chunk contains ~500ms of audio at t=0ms.
+// Late-joining viewers receive that t=0 cluster, then a gap, then live clusters
+// at t=elapsed.  The browser plays the 500ms then stalls at the gap forever.
+// A metadata-only init means the browser's buffered range starts directly at
+// the first live cluster timestamp — no gap, no stall.
+function stripAudioCluster(buf) {
+  // WebM Cluster element EBML ID: 0x1F 0x43 0xB6 0x75
+  for (let i = 0; i <= buf.length - 4; i++) {
+    if (buf[i] === 0x1F && buf[i + 1] === 0x43 && buf[i + 2] === 0xB6 && buf[i + 3] === 0x75) {
+      return buf.slice(0, i); // metadata only, no audio data
+    }
+  }
+  return buf; // no cluster found (shouldn't happen with MediaRecorder output)
+}
+
 // ── IPC: relay audio chunks (WebM/Opus) from renderer to WebSocket clients ──
 let _ipcAudioChunkCount = 0;
-ipcMain.on('audio-chunk', (_event, buffer) => {
+let _audioDiagFile = null; // Temporary: write first ~5s of audio to a .webm file for validation
+let _audioDiagTimer = null;
+
+ipcMain.on('audio-chunk', (_event, rawBuffer) => {
   if (!server) return;
+  // Electron IPC delivers ArrayBuffer (which has .byteLength, not .length, and
+  // no index access). Convert to Node.js Buffer for consistent API.
+  const buffer = Buffer.from(rawBuffer);
   _ipcAudioChunkCount++;
   if (_ipcAudioChunkCount === 1) {
-    console.log('[Audio] First IPC chunk — type:', buffer?.constructor?.name, 'size:', buffer?.length);
-  } else if (_ipcAudioChunkCount % 20 === 0) {
-    console.log('[Audio] IPC chunk count:', _ipcAudioChunkCount);
+    console.log('[Audio] First IPC chunk — size:', buffer.length);
+    // Notify video viewers immediately so the phone's unmute button appears
+    // without waiting for EBML detection or loadedmetadata.
+    server.setAudioFlowing();
+
+    // ── Diagnostic: dump first ~5 seconds to a .webm file ──
+    // Open the resulting file in VLC or Chrome to verify the audio is valid.
+    const diagPath = path.join(app.getPath('userData'), 'audio-diag.webm');
+    try {
+      const fs = require('fs');
+      _audioDiagFile = fs.createWriteStream(diagPath);
+      _audioDiagFile.write(Buffer.from(buffer));
+      console.log('[Audio] DIAGNOSTIC: writing audio to', diagPath);
+      _audioDiagTimer = setTimeout(() => {
+        if (_audioDiagFile) {
+          _audioDiagFile.end();
+          _audioDiagFile = null;
+          console.log('[Audio] DIAGNOSTIC: file closed —', diagPath, '— open in VLC to verify');
+        }
+      }, 25000);
+    } catch (err) {
+      console.error('[Audio] DIAGNOSTIC: failed to create file:', err.message);
+    }
+  } else {
+    if (_audioDiagFile) {
+      try { _audioDiagFile.write(Buffer.from(buffer)); } catch (_) {}
+    }
+    if (_ipcAudioChunkCount % 20 === 0) {
+      console.log('[Audio] IPC chunk count:', _ipcAudioChunkCount, 'chunk size:', buffer.length);
+    }
   }
   // WebM streams begin with an EBML header (magic bytes 1A 45 DF A3).
-  // The first ondataavailable chunk from MediaRecorder always contains it.
-  // Store it so late-joining audio viewers receive the header first and
-  // can decode subsequent clusters — same pattern as the H.264 init segment.
-  // Use plain index access (works for Buffer AND Uint8Array — Electron IPC
-  // may deliver the ArrayBuffer as either type depending on version).
+  // Store the full first chunk as the init segment (replayed to late-joining viewers).
+  // Don't strip the cluster — the first chunk from MediaRecorder is typically
+  // just header (274B) with no or tiny cluster data; stripping risks corrupting it.
   if (buffer && buffer.length >= 4 &&
       buffer[0] === 0x1A && buffer[1] === 0x45 &&
       buffer[2] === 0xDF && buffer[3] === 0xA3) {
-    console.log('[Audio] EBML init segment detected, size:', buffer.length);
-    server.setAudioInit(buffer);
+    console.log('[Audio] EBML init segment stored, size:', buffer.length);
+    server.setAudioInit(Buffer.from(buffer));
   }
   server.broadcastAudioChunk(buffer);
+});
+
+// ── IPC: get desktop source ID for chromeMediaSource:'desktop' getUserMedia ──
+ipcMain.handle('get-desktop-source-id', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    return sources.length > 0 ? sources[0].id : null;
+  } catch (_) {
+    return null;
+  }
 });
 
 // ── IPC: generate QR code data URL for the viewer URL ──
@@ -516,17 +575,17 @@ app.whenReady().then(() => {
     app.setLoginItemSettings({ openAtLogin: cfg.launchOnStartup });
   }
 
-  // Intercept getDisplayMedia() calls from the renderer and provide a desktop
-  // source + Windows WASAPI loopback audio, bypassing the system picker dialog.
-  // audio: 'loopback' uses Chromium's built-in WASAPI stack — no ffmpeg needed.
+  // Intercept getDisplayMedia() calls from the renderer.
+  // Use system-wide WASAPI loopback to capture audio from the default output device.
+  // This captures everything playing through the speakers, including the webview's audio.
   session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
       if (!sources || sources.length === 0) {
-        console.warn('[Audio] desktopCapturer returned no screen sources — loopback unavailable');
+        console.warn('[Audio] No screen sources available');
         callback({});
         return;
       }
-      console.log('[Audio] desktopCapturer sources:', sources.length, '— using:', sources[0].name);
+      console.log('[Audio] Using screen source:', sources[0].name, '+ WASAPI loopback');
       callback({ video: sources[0], audio: 'loopback' });
     }).catch((err) => {
       console.error('[Audio] desktopCapturer.getSources failed:', err.message);

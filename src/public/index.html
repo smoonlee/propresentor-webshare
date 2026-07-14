@@ -62,7 +62,7 @@
 <body>
   <img    id="frame-jpeg" alt="Waiting for stream…" />
   <video  id="frame-h264" autoplay muted playsinline></video>
-  <audio  id="frame-audio" style="display:none" playsinline></audio>
+  <audio  id="frame-audio" style="display:none" preload="auto" playsinline></audio>
   <div id="overlay">Waiting for stream…</div>
   <button id="btn-unmute" title="Enable audio">🔇 Tap to enable audio</button>
   <button id="btn-fs" title="Toggle fullscreen">⛶</button>
@@ -79,6 +79,9 @@
     let sourceBuffer = null;
     let pendingChunks = [];
     let fatalError = false;
+    // Set to true when the server confirms audio is flowing; prevents the
+    // unmute button from flickering when the HTTP audio stream briefly reconnects.
+    let audioAvailableFromServer = false;
 
     // ── Audio loopback (HTTP chunked WebM streaming) ───────────────────────────
     // Using plain HTTP chunked transfer rather than WebSocket + MSE SourceBuffer.
@@ -93,19 +96,41 @@
 
     btnUnmute.addEventListener('click', () => {
       frameAudio.muted = false;
-      // Seek to the live edge before playing.
-      // When a viewer joins a stream mid-session, the server replays the EBML
-      // init segment (timestamp = 0) but the live clusters arriving have
-      // timestamps of e.g. 5000 ms.  The <audio> element starts at currentTime=0
-      // and waits for data that never arrives there, producing permanent silence.
-      // Seeking to buffered.start(0) puts currentTime where data actually exists.
-      if (frameAudio.buffered.length > 0) {
-        try { frameAudio.currentTime = frameAudio.buffered.start(0); } catch (_) {}
-      }
-      frameAudio.play().catch(e => {
-        console.log('[Audio] play() rejected on unmute:', e && e.name, frameAudio.readyState, frameAudio.networkState);
-      });
       btnUnmute.style.display = 'none';
+
+      // Seek to the START of the LAST buffered range before playing.
+      // The server replays the session's first WebM chunk (t=0, ~500ms of audio)
+      // to every new viewer, then streams live clusters at t=elapsed (e.g. t=60000ms).
+      // This creates two buffered ranges: [0, 0.5] and [60000, ...].  Without
+      // seeking to the last range, the element plays 500ms then stalls forever.
+      function seekToLastRange() {
+        const len = frameAudio.buffered.length;
+        if (len > 0) {
+          try { frameAudio.currentTime = frameAudio.buffered.start(len - 1); } catch (_) {}
+        }
+      }
+
+      if (frameAudio.paused) {
+        // Element is paused: seek then start
+        seekToLastRange();
+        frameAudio.play().catch(e => {
+          console.log('[Audio] play() rejected on unmute:', e && e.name,
+            'readyState:', frameAudio.readyState, 'networkState:', frameAudio.networkState);
+        });
+        if (frameAudio.buffered.length === 0) {
+          // No data yet — seek when the first chunk arrives
+          function onProgress() {
+            if (frameAudio.buffered.length > 0) {
+              seekToLastRange();
+              frameAudio.removeEventListener('progress', onProgress);
+            }
+          }
+          frameAudio.addEventListener('progress', onProgress);
+        }
+      } else {
+        // Already playing muted — seek to live edge then unmuting is enough
+        seekToLastRange();
+      }
     });
 
     function connectAudio() {
@@ -117,10 +142,13 @@
         if (done) return;
         done = true;
         _audioConnected = false;
+        audioReconnectDelay = Math.min(audioReconnectDelay * 1.5, 30000);
         console.log('[Audio] HTTP stream', reason, '— reconnecting in', audioReconnectDelay, 'ms');
         frameAudio.pause();
         frameAudio.src = '';
-        btnUnmute.style.display = 'none';
+        // Keep the button visible if the server has confirmed audio is available —
+        // the HTTP stream may just be briefly reconnecting.
+        if (!audioAvailableFromServer) btnUnmute.style.display = 'none';
         setTimeout(connectAudio, audioReconnectDelay);
       }
 
@@ -130,6 +158,8 @@
       // loadedmetadata fires as soon as the WebM init segment is parsed — reliable
       // on Edge Android.  Whichever fires first wins; the second call is harmless.
       const showUnmute = () => {
+        audioReconnectDelay = 2000; // reset backoff on successful connection
+        audioAvailableFromServer = true;
         console.log('[Audio] Stream ready — showing unmute button');
         btnUnmute.style.display = 'block';
       };
@@ -141,24 +171,40 @@
         console.log('[Audio] error code=' + code);
         disconnect('error(code=' + code + ')');
       }, { once: true });
-      // If the element stalls (buffered data exists but currentTime is outside it),
-      // re-seek to the start of the buffered range to recover.
-      frameAudio.addEventListener('stalled', () => {
-        console.log('[Audio] stalled — buffered:', frameAudio.buffered.length,
-          frameAudio.buffered.length ? frameAudio.buffered.start(0)+'-'+frameAudio.buffered.end(0) : 'empty',
-          'currentTime:', frameAudio.currentTime);
-        if (frameAudio.buffered.length > 0) {
-          try { frameAudio.currentTime = frameAudio.buffered.start(0); } catch (_) {}
+      // If the element stalls or waits in a timestamp gap (the init chunk creates
+      // buffered range [0, ~0.5s]; live clusters create range [elapsed, ...];
+      // the element plays the init chunk then stalls at the gap), seek forward to
+      // the start of the LAST buffered range where live data actually is.
+      function seekToBuffer() {
+        const len = frameAudio.buffered.length;
+        if (len === 0) return;
+        const latestStart = frameAudio.buffered.start(len - 1);
+        if (frameAudio.currentTime < latestStart - 0.1) {
+          console.log('[Audio] gap detected — seeking from', frameAudio.currentTime.toFixed(1), 'to', latestStart.toFixed(1));
+          try { frameAudio.currentTime = latestStart; } catch (_) {}
         }
+      }
+      frameAudio.addEventListener('stalled', () => {
+        console.log('[Audio] stalled — buffered ranges:', frameAudio.buffered.length,
+          Array.from({ length: frameAudio.buffered.length }, (_, i) =>
+            frameAudio.buffered.start(i).toFixed(0) + '-' + frameAudio.buffered.end(i).toFixed(0)).join(', '),
+          'currentTime:', frameAudio.currentTime.toFixed(1));
+        seekToBuffer();
       });
       frameAudio.addEventListener('waiting', () => {
-        console.log('[Audio] waiting — buffered:', frameAudio.buffered.length,
-          frameAudio.buffered.length ? frameAudio.buffered.start(0)+'-'+frameAudio.buffered.end(0) : 'empty',
-          'currentTime:', frameAudio.currentTime);
+        console.log('[Audio] waiting — buffered ranges:', frameAudio.buffered.length,
+          Array.from({ length: frameAudio.buffered.length }, (_, i) =>
+            frameAudio.buffered.start(i).toFixed(0) + '-' + frameAudio.buffered.end(i).toFixed(0)).join(', '),
+          'currentTime:', frameAudio.currentTime.toFixed(1));
+        seekToBuffer();
       });
 
       frameAudio.src = '/webshare/audio?t=' + Date.now();
       console.log('[Audio] Connecting via HTTP stream /webshare/audio');
+      // Start muted playback immediately so data is buffered before the user taps.
+      // Muted autoplay is permitted on Edge/Chrome Android without a user gesture.
+      // If the browser rejects it (stricter policy), the preload="auto" attribute
+      // will buffer passively and play() in the click handler will trigger loading.
       frameAudio.play().catch(() => {});
     }
 
@@ -173,10 +219,22 @@
       ws.onopen = () => { reconnectDelay = 1000; };
 
       ws.onmessage = (e) => {
-        // First message from server is always a JSON text config
-        if (!configured && typeof e.data === 'string') {
-          configured = true;
-          try { setupMode(JSON.parse(e.data), ws); } catch (_) {}
+        // All text frames are JSON control messages (config on connect, then
+        // server-initiated notifications such as audio-available).
+        if (typeof e.data === 'string') {
+          try {
+            const msg = JSON.parse(e.data);
+            if (!configured) {
+              configured = true;
+              setupMode(msg, ws);
+            } else if (msg.type === 'audio-available' && audioSupported) {
+              // Server has started receiving audio chunks — show the unmute
+              // button immediately without waiting for loadedmetadata (which
+              // is unreliable for live streams on Edge/Chrome Android).
+              audioAvailableFromServer = true;
+              btnUnmute.style.display = 'block';
+            }
+          } catch (_) {}
           return;
         }
         if (mode === 'jpeg') {
@@ -199,6 +257,12 @@
     }
 
     function setupMode(cfg, ws) {
+      // If the server already has audio flowing when we connect, show the
+      // unmute button immediately (no need to wait for loadedmetadata).
+      if (cfg.audioAvailable && audioSupported) {
+        audioAvailableFromServer = true;
+        btnUnmute.style.display = 'block';
+      }
       if (cfg.mode === 'jpeg') {
         mode = 'jpeg';
         frameJpeg.style.display = 'block';
@@ -211,7 +275,7 @@
           return;
         }
         // Video is always video-only. If server sends a combined codec (older build),
-        // strip the audio part — audio comes on the separate /webshare/ws-audio socket.
+        // strip the audio part — audio is delivered separately via /webshare/audio (HTTP).
         const videoCodec = (cfg.codec || 'avc1.640028').split(',')[0].trim();
         const mimeType = `video/mp4; codecs="${videoCodec}"`;
         if (!MediaSource.isTypeSupported(mimeType)) {

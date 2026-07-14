@@ -13,8 +13,11 @@ function createServer(port, bindAddress) {
     readyReject = reject;
   });
 
-  // Serve the webshare viewer page
-  app.use('/webshare', express.static(path.join(__dirname, 'public')));
+  // Serve the webshare viewer page.  no-store prevents the phone/tablet browser
+  // from caching stale viewer code after an app update.
+  app.use('/webshare', express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res) => res.setHeader('Cache-Control', 'no-store'),
+  }));
 
   // HTTP chunked audio streaming — serves WebM/Opus directly to <audio> elements.
   // More compatible than WebSocket+MSE: the browser's native audio demuxer handles
@@ -55,13 +58,9 @@ function createServer(port, bindAddress) {
     req.on('error', () => { remove(); try { res.end(); } catch (_) {} });
   });
 
-  // Both WebSocket servers use noServer:true so neither registers its own
-  // 'upgrade' listener.  A single manual router dispatches by path.
-  // Using { server, path } on either server causes it to call
-  // abortHandshake(400) for unmatched paths, destroying sockets the other
-  // server was about to claim — even if the other server was registered first.
+  // noServer:true so the WebSocketServer does not register its own 'upgrade'
+  // listener.  A manual router dispatches by path.
   const wss = new WebSocketServer({ noServer: true });
-  const wssAudio = new WebSocketServer({ noServer: true });
 
   httpServer.on('upgrade', (req, socket, head) => {
     const url = req.url ? req.url.split('?')[0] : '';
@@ -69,30 +68,13 @@ function createServer(port, bindAddress) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req);
       });
-    } else if (url === '/webshare/ws-audio') {
-      wssAudio.handleUpgrade(req, socket, head, (ws) => {
-        wssAudio.emit('connection', ws, req);
-      });
     } else {
       socket.destroy();
     }
   });
 
   let audioInitChunk = null; // First WebM chunk (EBML header) — replayed to every new audio viewer
-
-  wssAudio.on('connection', (ws) => {
-    console.log(`[WebShare] Audio viewer connected (${wssAudio.clients.size} total)`);
-    ws.on('error', () => {});
-    ws.on('close', () => {
-      console.log(`[WebShare] Audio viewer disconnected (${wssAudio.clients.size} total)`);
-    });
-    // Replay the WebM init segment so viewers that connect after capture started
-    // can still decode the stream.  Without it, the SourceBuffer rejects every
-    // subsequent cluster and audio never plays.
-    if (audioInitChunk) {
-      try { ws.send(audioInitChunk); } catch (_) {}
-    }
-  });
+  let audioFlowing = false;  // True once any audio IPC chunk arrives; drives audioAvailable in config
 
   let lastFrame = null;
   let currentMode = 'jpeg';
@@ -102,9 +84,11 @@ function createServer(port, bindAddress) {
 
   wss.on('connection', (ws) => {
     console.log(`[WebShare] Viewer connected (${wss.clients.size} total)`);
-    // First message: mode config so the viewer sets up the correct display path
+    // First message: mode config so the viewer sets up the correct display path.
+    // audioAvailable tells the viewer whether audio is already flowing so it can
+    // show the unmute button immediately without waiting for loadedmetadata.
     try {
-      ws.send(JSON.stringify({ type: 'config', mode: currentMode, codec: currentCodecStr }));
+      ws.send(JSON.stringify({ type: 'config', mode: currentMode, codec: currentCodecStr, audioAvailable: audioFlowing }));
     } catch (_) {}
     // Seed the viewer:
     if (currentMode === 'h264') {
@@ -154,20 +138,33 @@ function createServer(port, bindAddress) {
   // Store the WebM init segment (EBML header).  Called when the first chunk
   // of a new MediaRecorder session is detected.
   // If a previous init segment already existed, the audio capture restarted.
-  // Existing audio viewers have the old WebM stream's EBML header in their
-  // MSE SourceBuffer — appending a new EBML header would throw InvalidStateError
-  // and silently break the SourceBuffer.  Close them so they reconnect fresh
-  // and receive the new stream from scratch.
+  // Existing HTTP audio viewers received the old EBML header and their <audio>
+  // element cannot decode data from a new stream — close them so they reconnect
+  // fresh and receive the new init segment on the next connection.
+  // Mark audio as flowing and notify all connected video viewers once.
+  // Idempotent — safe to call multiple times; only the first call sends the
+  // WebSocket notification.  Called from the main process on the very first IPC
+  // audio chunk so phones see the unmute button immediately, before EBML
+  // detection and before the <audio> element fires loadedmetadata.
+  function setAudioFlowing() {
+    if (audioFlowing) return;
+    audioFlowing = true;
+    const msg = JSON.stringify({ type: 'audio-available' });
+    for (const client of wss.clients) {
+      if (client.readyState === 1) {
+        try { client.send(msg); } catch (_) {}
+      }
+    }
+  }
+
   function setAudioInit(buf) {
     const isRestart = audioInitChunk !== null;
     audioInitChunk = buf;
+    setAudioFlowing(); // idempotent — ensures notification is sent even if main.js
+                      // hasn't called setAudioFlowing() directly yet
     if (isRestart) {
-      const wsCount = wssAudio.clients.size;
       const httpCount = audioHttpClients.length;
-      console.log(`[WebShare] Audio stream restarted — closing ${wsCount} WS + ${httpCount} HTTP audio viewer(s) for clean reconnect`);
-      for (const client of wssAudio.clients) {
-        try { client.close(1001, 'stream-restart'); } catch (_) {}
-      }
+      console.log(`[WebShare] Audio stream restarted — closing ${httpCount} HTTP audio viewer(s) for clean reconnect`);
       // End HTTP streaming connections so clients reconnect with fresh init segment
       for (const res of audioHttpClients) {
         try { res.end(); } catch (_) {}
@@ -176,25 +173,13 @@ function createServer(port, bindAddress) {
     }
   }
 
-  function clearAudioInit() {
-    audioInitChunk = null;
-  }
-
-  // Broadcast a WebM/Opus audio chunk to all connected audio viewers
+  // Broadcast a WebM/Opus audio chunk to all connected HTTP audio viewers
   function broadcastAudioChunk(chunk) {
-    // WebSocket clients
-    for (const client of wssAudio.clients) {
-      if (client.readyState === 1 && client.bufferedAmount < MAX_BUFFERED) {
-        try { client.send(chunk); } catch (_) {}
-      }
-    }
-    // HTTP streaming clients
-    if (audioHttpClients.length > 0) {
-      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      audioHttpClients = audioHttpClients.filter(res => {
-        try { res.write(buf); return true; } catch (_) { return false; }
-      });
-    }
+    if (audioHttpClients.length === 0) return;
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    audioHttpClients = audioHttpClients.filter(res => {
+      try { res.write(buf); return true; } catch (_) { return false; }
+    });
   }
 
   function clearLastFrame() {
@@ -254,8 +239,8 @@ function createServer(port, bindAddress) {
     broadcastFrame,
     broadcastChunk,
     broadcastAudioChunk,
+    setAudioFlowing,
     setAudioInit,
-    clearAudioInit,
     clearLastFrame,
     setMode,
     setH264Init,
@@ -265,10 +250,8 @@ function createServer(port, bindAddress) {
     address: () => httpServer.address(),
     close: () => {
       for (const client of wss.clients) client.terminate();
-      for (const client of wssAudio.clients) client.terminate();
       for (const res of audioHttpClients) { try { res.end(); } catch (_) {} }
       wss.close();
-      wssAudio.close();
       httpServer.close();
     },
   };

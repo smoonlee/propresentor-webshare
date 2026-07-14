@@ -63,6 +63,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Send a WebM/Opus audio chunk captured in the renderer to the main process
   sendAudioChunk: (data) => ipcRenderer.send('audio-chunk', data),
 
+  // Get desktop capturer source IDs (needed for chromeMediaSource:'desktop' in getUserMedia)
+  getDesktopSourceId: () => ipcRenderer.invoke('get-desktop-source-id'),
+
   // QR code data URL for viewer URL
   getQrCode: () => ipcRenderer.invoke('get-qr-code'),
 });
