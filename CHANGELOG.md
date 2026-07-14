@@ -6,44 +6,30 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
-## [1.6.4] - 2026-07-13
-
-### Changed
-
-- **Native audio loopback via Electron `getDisplayMedia`** — removed all ffmpeg-based audio capture (WASAPI / DirectShow). Audio is now captured entirely through Chromium's built-in WASAPI loopback by calling `navigator.mediaDevices.getDisplayMedia({ audio: true })` in the Electron renderer; `session.setDisplayMediaRequestHandler` intercepts the call and provides `audio: 'loopback'` without any system dialog. Encoded as WebM/Opus using the browser's native `MediaRecorder` (500 ms chunks) and relayed to browsers via HTTP chunked streaming (`/webshare/audio`). No external software, no virtual audio cable, and no system-installed ffmpeg required. Safari/iOS does not support `audio/webm;codecs=opus` and will receive video only.
-- **Separate audio HTTP stream** — browser viewers connect to `/webshare/audio` (HTTP chunked) for audio and receive a “Tap to enable audio” button once the EBML init segment is parsed. Video (`/webshare/ws`) is unchanged.
-- **Audio device dropdown removed** — the device-selection UI is no longer needed; only an Audio loopback ON/OFF toggle remains.
-
-### Fixed
-
-- **`ws` dual-server path conflict** — using two `WebSocketServer` instances with `path` filtering on the same HTTP server caused each server to call `abortHandshake(400)` and destroy sockets owned by the other. The audio server now uses `noServer: true` with a manual `upgrade` router, matching the pattern recommended in the `ws` README.
-
-### Changed
-
-- **Auto-detect system ffmpeg with WASAPI** — `getFfmpegPath()` now checks `PATH` for a system-installed ffmpeg (e.g. `winget install Gyan.FFmpeg`) before falling back to the bundled essentials build. If a full-build ffmpeg with WASAPI support is found, it is used for all encoding and device listing. This means audio loopback just works after installing the full ffmpeg, with no manual configuration. The amber warning in Settings is only shown when no WASAPI-capable ffmpeg is available.
-
-## [1.6.2] - 2026-07-12
-
-### Changed
-
-- **Audio capture: WASAPI → dshow fallback** — the bundled `ffmpeg-static` is the essentials build which does not include WASAPI (needed for system audio loopback). `listAudioDevices()` now detects which formats the ffmpeg binary supports at runtime: WASAPI is used when available (full build), otherwise DirectShow devices are listed (useful when "Stereo Mix" or a virtual audio cable is present). The `-loopback` WASAPI flag is reordered to appear immediately after `-f wasapi` for more reliable option parsing.
+## [1.6.0] - 2026-07-14
 
 ### Added
 
-- **Audio settings note** — when only DirectShow is available (essentials build), a yellow warning is shown below the audio device dropdown explaining that system audio loopback requires either the full ffmpeg build (`winget install Gyan.FFmpeg`) or Stereo Mix enabled in Windows Sound settings.
-
-## [1.6.1] - 2026-07-12
-
-### Fixed
-
-- **ffmpeg stdin write EOF crash** — when ffmpeg exits (e.g. WASAPI loopback fails to open or the audio device is unavailable), the capture loop emits an unhandled `'error'` event on `ffmpegProc.stdin` as it tries to write the next frame. Added `ffmpegProc.stdin.on('error', () => {})` to absorb these asynchronous write errors, matching the same fix applied to WebSocket sends in v1.5.3.
-
-## [1.6.0] - 2026-07-12
-
-### Added
-
-- **Audio streaming (H.264 mode)** — the H.264 pipeline can now capture and mux system audio alongside video. Enable in Settings → Streaming → Audio, then select your Windows output device (WASAPI loopback). Viewers hear live audio in their browser; a "Tap to enable audio" button appears if the browser blocks autoplay with sound. Audio is disabled in JPEG mode.
+- **Audio streaming** — enable in Settings → Streaming → Audio loopback. Captures system audio via Windows WASAPI loopback (`getDisplayMedia` + Chromium's built-in loopback), encodes as WebM/Opus (200 ms chunks) using the browser's native `MediaRecorder`, and streams to viewers via HTTP chunked transfer (`/webshare/audio`). No external software, virtual audio cable, or system-installed ffmpeg required.
+- **Browser unmute button** — remote viewers see a "🔇 Tap to enable audio" button that appears once the server confirms audio is flowing. Clicking satisfies the browser autoplay policy and starts playback. The button does not reappear after dismissal.
+- **Audio pre-warm** — a brief inaudible white-noise pulse plays at app startup to wake the Windows audio endpoint, reducing WASAPI loopback initialisation delay.
 - **QR code** — a **QR** button in the status bar generates a scannable code for the viewer URL (`http://<LAN IP>:<port>/webshare`). Eliminates manual URL typing on phones and tablets.
+
+### Changed
+
+- **Single WebSocket server** — removed the unused `/webshare/ws-audio` WebSocket server. Audio is delivered exclusively via HTTP chunked streaming which is more compatible with mobile browsers.
+- **Cache-busting** — the viewer page is now served with `Cache-Control: no-store` so phone/tablet browsers always load the latest code after an app update.
+
+### Fixed
+
+- **WebSocket write EOF crash** — added `ws.on('error', ...)` handler on each viewer connection so that asynchronous write failures are silently absorbed instead of propagating as an uncaught main-process exception.
+- **ArrayBuffer IPC handling** — Electron IPC delivers `ArrayBuffer` (not `Buffer`) from the renderer; the main process now converts immediately to avoid silent failures in EBML header detection.
+
+### Notes
+
+- Audio is captured from the Windows default playback device (WASAPI loopback). Only audio routed through that device is captured.
+- WASAPI loopback may take a few seconds to warm up after the app starts before audio flows.
+- Safari/iOS does not support `audio/webm;codecs=opus` — those viewers receive video only.
 
 ## [1.5.3] - 2026-07-12
 

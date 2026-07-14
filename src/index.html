@@ -406,7 +406,6 @@
   <!-- Status bar -->
   <div id="status-bar">
     <span id="viewer-count">0 viewers</span>
-    <span id="audio-indicator" style="display:none;font-size:11px;color:#4caf50;">🔊 audio</span>
     <span class="spacer"></span>
     <a href="#" id="server-url" style="color:#6ca0dc;text-decoration:underline;cursor:pointer;">loading…</a>
     <button id="btn-qr" title="Show QR code for viewer URL">QR</button>
@@ -430,7 +429,6 @@
       <div class="diag-row"><span class="diag-label">Bandwidth</span><span class="diag-val" id="diag-bandwidth">0 KB/s</span></div>
       <div class="diag-row"><span class="diag-label">Skipped</span><span class="diag-val" id="diag-skipped" style="color:#6ca0dc">0/s</span></div>
       <div class="diag-row"><span class="diag-label">Viewers</span><span class="diag-val" id="diag-viewers">0</span></div>
-      <div class="diag-row"><span class="diag-label">Audio chunks</span><span class="diag-val" id="diag-audio-chunks" style="color:#6ca0dc">—</span></div>
       <div class="diag-row"><span class="diag-label">Memory (app)</span><span class="diag-val" id="diag-memory">0 MB</span></div>
       <div class="diag-row"><span class="diag-label">Uptime</span><span class="diag-val" id="diag-uptime">0s</span></div>
       <div class="diag-row"><span class="diag-label">LAN IP</span><span class="diag-val" id="diag-lan-ip" style="color:#6ca0dc">—</span></div>
@@ -484,13 +482,13 @@
           <span id="s-encoder-label" style="font-size:12px;color:#aaa;flex:1">Detecting…</span>
         </div>
         <div class="s-field">
-          <label>Audio loopback (H.264 only)</label>
+          <label>Audio loopback</label>
           <label class="s-toggle">
             <input type="checkbox" id="s-audio-enabled" />
             <span class="slider"></span>
           </label>
         </div>
-        <div id="s-audio-cap-status" style="display:none;font-size:11px;padding:2px 0 6px;margin-top:-4px;"></div>
+        <div style="font-size:10px;color:#4e637f;margin-top:-4px;padding:0 0 6px;">Captures all system audio from the Windows default playback device</div>
       </div>
 
       <div class="s-section">
@@ -650,38 +648,21 @@
       audioEnabled:  document.getElementById('s-audio-enabled'),
     };
 
-    // ── Native audio capture via Electron getDisplayMedia loopback ──
-    // The main process setDisplayMediaRequestHandler intercepts this call and
-    // provides audio:'loopback' (Chromium WASAPI), so no ffmpeg WASAPI needed.
+    // ── Audio capture via WASAPI loopback ──
+    // getDisplayMedia + setDisplayMediaRequestHandler provides system audio.
+    // Encoded as WebM/Opus via MediaRecorder and relayed to viewers over HTTP.
     let audioMediaRecorder = null;
     let audioStream = null;
     let _audioCapturePending = false; // prevents concurrent getDisplayMedia calls
     let _audioChunkCount = 0;
 
-    // Update the audio capture status in the Settings panel and status bar.
-    function setAudioCaptureStatus(msg, color) {
-      const panelEl = document.getElementById('s-audio-cap-status');
-      if (panelEl) {
-        if (!msg) { panelEl.style.display = 'none'; }
-        else { panelEl.textContent = msg; panelEl.style.color = color || '#e9a560'; panelEl.style.display = 'block'; }
-      }
-      const barEl = document.getElementById('audio-indicator');
-      if (barEl) {
-        const on = !!(msg && msg.startsWith('●'));
-        barEl.style.display = on ? 'inline' : 'none';
-      }
-    }
-
     async function startAudioCapture() {
       if (audioMediaRecorder || _audioCapturePending) return;
       _audioCapturePending = true;
-      setAudioCaptureStatus('Starting…', '#e9a560');
       console.log('[Audio] startAudioCapture: calling getDisplayMedia');
       try {
-        // Call getDisplayMedia — the main process setDisplayMediaRequestHandler
-        // intercepts this and provides audio from the webview (the shared page)
-        // rather than system-wide WASAPI loopback. Viewers hear only what the
-        // shared page produces.
+        // getDisplayMedia — setDisplayMediaRequestHandler in main.js intercepts
+        // this and provides audio:'loopback' (WASAPI system audio capture).
         const ms = await navigator.mediaDevices.getDisplayMedia({
           audio: true,
           video: { width: 1, height: 1, frameRate: 1 },
@@ -696,89 +677,22 @@
         if (!audioTrack) {
           console.warn('[Audio] No audio track in MediaStream — loopback may be unsupported');
           _audioCapturePending = false;
-          setAudioCaptureStatus('⚠ No audio device found — check Windows audio settings', '#e94560');
           ms.getTracks().forEach(t => t.stop()); return;
         }
-        const trackLabel = audioTrack.label || '(no label)';
-        console.log('[Audio] Track label:', trackLabel, '| muted:', audioTrack.muted, '| readyState:', audioTrack.readyState);
-        if (audioTrack.muted) {
-          // Track exists but is muted — WASAPI obtained a device but it’s producing silence.
-          // Common cause: audio is playing through a different output device than the
-          // one WASAPI is looping back (e.g. Bluetooth headset vs Speakers).
-          setAudioCaptureStatus('⚠ Silent: ' + trackLabel + ' — ensure audio plays through the Windows default output device', '#e94560');
-          console.warn('[Audio] Audio track is muted — WASAPI capturing silence. Check Windows default output device.');
-        } else {
-          setAudioCaptureStatus('● Capturing: ' + trackLabel, '#4caf50');
-        }
-        // Watch for the track becoming muted after capture starts
-        audioTrack.addEventListener('mute', () => {
-          console.warn('[Audio] Track muted mid-session:', trackLabel);
-          setAudioCaptureStatus('⚠ Audio source muted: ' + trackLabel, '#e9a560');
-        });
-        audioTrack.addEventListener('unmute', () => {
-          console.log('[Audio] Track unmuted:', trackLabel);
-          setAudioCaptureStatus('● Capturing: ' + trackLabel, '#4caf50');
-        });
+        console.log('[Audio] Track:', audioTrack.label || '(no label)', '| muted:', audioTrack.muted, '| readyState:', audioTrack.readyState);
         // Keep the full stream (ms) alive so the video tracks preserve the WASAPI
-        // loopback session on Windows.  Feed MediaRecorder an audio-only copy so
-        // there is no ambiguity about which tracks to encode — the recorder spec
-        // says to throw NotSupportedError if there are no supported tracks, but
-        // some Chromium builds also throw when the mimeType and stream tracks
-        // disagree.  An explicit audio-only MediaStream avoids that entirely.
-        audioStream = ms; // full-stream ref kept for cleanup (stops video + audio tracks)
+        // loopback session on Windows.
+        audioStream = ms;
         _audioChunkCount = 0;
 
-        // ── Silence detection (time-domain) ────────────────────────────────
-        // Use getByteTimeDomainData which returns raw PCM waveform (128 = silence).
-        // This is more reliable than getByteFrequencyData for detecting actual signal.
-        (function checkForSilence() {
-          let silenceCtx;
-          try {
-            silenceCtx = new AudioContext();
-            const src = silenceCtx.createMediaStreamSource(new MediaStream([audioTrack]));
-            const analyser = silenceCtx.createAnalyser();
-            analyser.fftSize = 2048;
-            src.connect(analyser);
-            const timeDomain = new Uint8Array(analyser.fftSize);
-            let checks = 0, silentChecks = 0, maxDeviation = 0;
-            const id = setInterval(() => {
-              analyser.getByteTimeDomainData(timeDomain);
-              // In time domain, silence = all values at 128. Deviation from 128 = signal.
-              let peak = 0;
-              for (let i = 0; i < timeDomain.length; i++) {
-                const dev = Math.abs(timeDomain[i] - 128);
-                if (dev > peak) peak = dev;
-              }
-              if (peak > maxDeviation) maxDeviation = peak;
-              if (peak <= 1) silentChecks++; // <=1 counts as silence (noise floor)
-              checks++;
-              console.log('[Audio] Silence check #' + checks + ': peak deviation=' + peak + '/128 (max so far=' + maxDeviation + ')');
-              if (checks >= 12) { // sample for ~3 s
-                clearInterval(id);
-                try { silenceCtx.close(); } catch (_) {}
-                if (silentChecks >= 10) {
-                  console.warn('[Audio] SILENCE: maxDeviation=' + maxDeviation + '/128 on', trackLabel);
-                  setAudioCaptureStatus(
-                    '⚠ Capturing (SILENT): ' + trackLabel +
-                    ' — WASAPI loopback not receiving audio. Check Windows default playback device.',
-                    '#e94560');
-                } else {
-                  setAudioCaptureStatus('● Capturing: ' + trackLabel + ' (peak=' + maxDeviation + ')', '#4caf50');
-                  console.log('[Audio] SIGNAL CONFIRMED: maxDeviation=' + maxDeviation + '/128 on', trackLabel);
-                }
-              }
-            }, 250);
-          } catch (err) {
-            console.warn('[Audio] Could not run silence check:', err.message);
-            if (silenceCtx) try { silenceCtx.close(); } catch (_) {}
-          }
-        })();
-
-        const recorder = new MediaRecorder(new MediaStream([audioTrack]), { mimeType: 'audio/webm;codecs=opus' });
+        const recorder = new MediaRecorder(new MediaStream([audioTrack]), {
+          mimeType: 'audio/webm;codecs=opus',
+          audioBitsPerSecond: 128000,
+        });
         recorder.ondataavailable = async (e) => {
           if (e.data.size > 0) {
             _audioChunkCount++;
-            if (_audioChunkCount === 1 || _audioChunkCount % 20 === 0) {
+            if (_audioChunkCount === 1 || _audioChunkCount % 50 === 0) {
               console.log('[Audio] Chunk #' + _audioChunkCount + ' size=' + e.data.size + 'B');
             }
             try { api.sendAudioChunk(await e.data.arrayBuffer()); } catch (_) {}
@@ -793,18 +707,17 @@
           audioMediaRecorder = null;
           if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
         };
-        recorder.start(500); // 500 ms chunks
+        // Use timeslice=960 (960ms = 48 Opus frames at 20ms each).
+        // This aligns WebM Cluster boundaries with complete Opus frame groups,
+        // preventing the "watery" artefact caused by mid-frame cluster splits.
+        // Values below ~500ms cause audible boundary artefacts; 960ms gives
+        // clean encoding with acceptable ~1s delivery latency.
+        recorder.start(960);
         console.log('[Audio] MediaRecorder started, state:', recorder.state);
-        // Only update status to generic ‘Capturing’ if the track wasn’t already
-        // flagged as muted above; keep the device label in the status.
-        if (!audioTrack.muted) {
-          setAudioCaptureStatus('● Capturing: ' + trackLabel, '#4caf50');
-        }
         _audioCapturePending = false;
         audioMediaRecorder = recorder;
       } catch (err) {
         console.error('[Audio] startAudioCapture failed:', err);
-        setAudioCaptureStatus('✗ ' + (err.message || 'Capture failed'), '#e94560');
         _audioCapturePending = false;
         audioMediaRecorder = null;
         audioStream = null;
@@ -818,14 +731,11 @@
         audioMediaRecorder = null;
       }
       if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
-      setAudioCaptureStatus(null);
     }
 
     sFields.audioEnabled.addEventListener('change', () => {
       const on = sFields.audioEnabled.checked;
       if (!on) stopAudioCapture();
-      // Audio capture is started when the stream begins (dom-ready), not here,
-      // so toggling ON only takes effect after the next settings save + reconnect.
     });
 
     sFields.streamMode.addEventListener('change', () => {
@@ -975,24 +885,28 @@
     });
 
     /* ── Early audio capture start ── */
-    // Start WASAPI loopback immediately on page load (not on webview dom-ready)
-    // to give it maximum time to warm up before the user expects audio.
-    // WASAPI loopback can take 10-20s to produce real data on some systems.
+    // Pre-warm the Windows audio endpoint IMMEDIATELY (before settings are read)
+    // so WASAPI loopback sees an active render endpoint from the very start.
+    // This runs in parallel with the async settings read below.
+    (function preWarmAudio() {
+      try {
+        const ctx = new AudioContext();
+        // Use white noise (broad spectrum) — more effective at waking WASAPI
+        // than a single-frequency oscillator. Volume is imperceptible.
+        const buf = ctx.createBuffer(1, ctx.sampleRate * 0.3, ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.001;
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ctx.destination);
+        src.start();
+        src.onended = () => ctx.close();
+      } catch (_) {}
+    })();
+
+    // Start WASAPI capture as early as possible — overlaps with pre-warm above.
     api.getSettings().then((s) => {
       if (s.audioEnabled && (s.streamMode || 'h264') === 'h264') {
-        // Pre-warm the Windows audio endpoint: play a tiny inaudible sound
-        // so WASAPI sees activity on the render endpoint immediately.
-        try {
-          const warmCtx = new AudioContext();
-          const osc = warmCtx.createOscillator();
-          const gain = warmCtx.createGain();
-          gain.gain.value = 0.0001; // inaudible
-          osc.connect(gain);
-          gain.connect(warmCtx.destination);
-          osc.start();
-          setTimeout(() => { osc.stop(); warmCtx.close(); }, 200);
-        } catch (_) {}
-        // Start capture immediately — don't wait for webview dom-ready
         startAudioCapture();
       }
     });
@@ -1148,20 +1062,6 @@
       document.getElementById('diag-skipped').textContent = (stats.skippedFrames || 0) + '/s';
 
       document.getElementById('diag-viewers').textContent = stats.viewers;
-
-      const audioChunksEl = document.getElementById('diag-audio-chunks');
-      if (audioChunksEl) {
-        if (stats.audioChunks > 0) {
-          audioChunksEl.textContent = stats.audioChunks;
-          audioChunksEl.style.color = '#4caf50';
-        } else if (audioMediaRecorder) {
-          audioChunksEl.textContent = '0 (no data yet)';
-          audioChunksEl.style.color = '#e94560';
-        } else {
-          audioChunksEl.textContent = '—';
-          audioChunksEl.style.color = '#6ca0dc';
-        }
-      }
 
       const memMB = (stats.memoryMB).toFixed(0);
       const memEl = document.getElementById('diag-memory');

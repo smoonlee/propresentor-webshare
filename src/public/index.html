@@ -82,6 +82,9 @@
     // Set to true when the server confirms audio is flowing; prevents the
     // unmute button from flickering when the HTTP audio stream briefly reconnects.
     let audioAvailableFromServer = false;
+    // Set to true once the user clicks unmute; prevents the button from
+    // reappearing when loadedmetadata/canplay fires after the click.
+    let audioUnmuted = false;
 
     // ── Audio loopback (HTTP chunked WebM streaming) ───────────────────────────
     // Using plain HTTP chunked transfer rather than WebSocket + MSE SourceBuffer.
@@ -96,6 +99,7 @@
 
     btnUnmute.addEventListener('click', () => {
       frameAudio.muted = false;
+      audioUnmuted = true;
       btnUnmute.style.display = 'none';
 
       // Seek to the START of the LAST buffered range before playing.
@@ -160,8 +164,10 @@
       const showUnmute = () => {
         audioReconnectDelay = 2000; // reset backoff on successful connection
         audioAvailableFromServer = true;
-        console.log('[Audio] Stream ready — showing unmute button');
-        btnUnmute.style.display = 'block';
+        if (!audioUnmuted) {
+          console.log('[Audio] Stream ready — showing unmute button');
+          btnUnmute.style.display = 'block';
+        }
       };
       frameAudio.addEventListener('loadedmetadata', showUnmute, { once: true });
       frameAudio.addEventListener('canplay',         showUnmute, { once: true });
@@ -171,33 +177,24 @@
         console.log('[Audio] error code=' + code);
         disconnect('error(code=' + code + ')');
       }, { once: true });
-      // If the element stalls or waits in a timestamp gap (the init chunk creates
-      // buffered range [0, ~0.5s]; live clusters create range [elapsed, ...];
-      // the element plays the init chunk then stalls at the gap), seek forward to
-      // the start of the LAST buffered range where live data actually is.
-      function seekToBuffer() {
+
+      // One-time gap seek: if the element stalls before any live data has played
+      // (init chunk at t=0 vs live clusters at t=elapsed), seek to the live range.
+      let _initialSeekDone = false;
+      function initialSeek() {
+        if (_initialSeekDone) return;
         const len = frameAudio.buffered.length;
-        if (len === 0) return;
-        const latestStart = frameAudio.buffered.start(len - 1);
-        if (frameAudio.currentTime < latestStart - 0.1) {
-          console.log('[Audio] gap detected — seeking from', frameAudio.currentTime.toFixed(1), 'to', latestStart.toFixed(1));
-          try { frameAudio.currentTime = latestStart; } catch (_) {}
+        if (len > 1) {
+          _initialSeekDone = true;
+          const latestStart = frameAudio.buffered.start(len - 1);
+          if (frameAudio.currentTime < latestStart - 0.5) {
+            console.log('[Audio] Initial gap seek:', frameAudio.currentTime.toFixed(1), '→', latestStart.toFixed(1));
+            try { frameAudio.currentTime = latestStart; } catch (_) {}
+          }
         }
       }
-      frameAudio.addEventListener('stalled', () => {
-        console.log('[Audio] stalled — buffered ranges:', frameAudio.buffered.length,
-          Array.from({ length: frameAudio.buffered.length }, (_, i) =>
-            frameAudio.buffered.start(i).toFixed(0) + '-' + frameAudio.buffered.end(i).toFixed(0)).join(', '),
-          'currentTime:', frameAudio.currentTime.toFixed(1));
-        seekToBuffer();
-      });
-      frameAudio.addEventListener('waiting', () => {
-        console.log('[Audio] waiting — buffered ranges:', frameAudio.buffered.length,
-          Array.from({ length: frameAudio.buffered.length }, (_, i) =>
-            frameAudio.buffered.start(i).toFixed(0) + '-' + frameAudio.buffered.end(i).toFixed(0)).join(', '),
-          'currentTime:', frameAudio.currentTime.toFixed(1));
-        seekToBuffer();
-      });
+      frameAudio.addEventListener('stalled', initialSeek);
+      frameAudio.addEventListener('waiting', initialSeek);
 
       frameAudio.src = '/webshare/audio?t=' + Date.now();
       console.log('[Audio] Connecting via HTTP stream /webshare/audio');
@@ -232,7 +229,7 @@
               // button immediately without waiting for loadedmetadata (which
               // is unreliable for live streams on Edge/Chrome Android).
               audioAvailableFromServer = true;
-              btnUnmute.style.display = 'block';
+              if (!audioUnmuted) btnUnmute.style.display = 'block';
             }
           } catch (_) {}
           return;
@@ -261,7 +258,7 @@
       // unmute button immediately (no need to wait for loadedmetadata).
       if (cfg.audioAvailable && audioSupported) {
         audioAvailableFromServer = true;
-        btnUnmute.style.display = 'block';
+        if (!audioUnmuted) btnUnmute.style.display = 'block';
       }
       if (cfg.mode === 'jpeg') {
         mode = 'jpeg';
