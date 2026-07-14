@@ -6,6 +6,7 @@ const { app } = require('electron');
 // MSE codec string — H.264 High Profile Level 4.0
 // Matches the explicit -profile:v high -level 4.0 applied to every encoder below.
 const MSE_CODEC_STRING = 'avc1.640028';
+const MSE_AUDIO_CODEC_STRING = 'mp4a.40.2';
 
 function getFfmpegPath() {
   const base = require('ffmpeg-static');
@@ -89,13 +90,28 @@ function keyframeInterval(fps) {
 }
 
 // Spawn an ffmpeg process: reads raw BGRA frames on stdin, outputs fragmented MP4 on stdout
-function spawnEncoder(codec, width, height, fps) {
+function getMseCodecString(includeAudio = false) {
+  return includeAudio
+    ? `${MSE_CODEC_STRING}, ${MSE_AUDIO_CODEC_STRING}`
+    : MSE_CODEC_STRING;
+}
+
+function spawnEncoder(codec, width, height, fps, options = {}) {
   const ffmpegPath = getFfmpegPath();
   const kf = keyframeInterval(fps);
+  const includeAudio = !!options.includeAudio && process.platform === 'win32';
 
   // -keyint_min and -sc_threshold are libx264-specific; omit for HW encoders
   const x264Only = codec === 'libx264'
     ? ['-keyint_min', String(kf), '-sc_threshold', '0']
+    : [];
+
+  const audioInput = includeAudio
+    ? ['-thread_queue_size', '1024', '-f', 'wasapi', '-loopback', '1', '-i', 'default']
+    : [];
+
+  const audioOutput = includeAudio
+    ? ['-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2']
     : [];
 
   const args = [
@@ -104,6 +120,8 @@ function spawnEncoder(codec, width, height, fps) {
     '-s', `${width}x${height}`,
     '-r', String(fps),
     '-i', 'pipe:0',
+    ...audioInput,
+    ...audioOutput,
     ...buildCodecArgs(codec),
     '-g', String(kf),
     ...x264Only,
@@ -115,4 +133,4 @@ function spawnEncoder(codec, width, height, fps) {
   return spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
-module.exports = { detectCodec, spawnEncoder, MSE_CODEC_STRING };
+module.exports = { detectCodec, spawnEncoder, MSE_CODEC_STRING, MSE_AUDIO_CODEC_STRING, getMseCodecString };

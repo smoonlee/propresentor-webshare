@@ -47,7 +47,7 @@
 </head>
 <body>
   <img    id="frame-jpeg" alt="Waiting for stream…" />
-  <video  id="frame-h264" autoplay muted playsinline></video>
+  <video  id="frame-h264" autoplay playsinline></video>
   <div id="overlay">Waiting for stream…</div>
   <button id="btn-fs" title="Toggle fullscreen">⛶</button>
 
@@ -61,6 +61,7 @@
     let sourceBuffer = null;
     let pendingChunks = [];
     let fatalError = false;
+    let playbackBlocked = false;
 
     function connect() {
       if (fatalError) return;
@@ -102,6 +103,7 @@
         mode = 'jpeg';
         frameJpeg.style.display = 'block';
         frameH264.style.display = 'none';
+        playbackBlocked = false;
       } else if (cfg.mode === 'h264') {
         const mimeType = `video/mp4; codecs="${cfg.codec}"`;
         if (!window.MediaSource) {
@@ -136,9 +138,10 @@
     function setupMSE(mimeType) {
       teardownH264();
       pendingChunks = [];
+      playbackBlocked = false;
       mediaSource = new MediaSource();
       frameH264.src = URL.createObjectURL(mediaSource);
-      frameH264.play().catch(() => {});
+      requestPlayback();
 
       mediaSource.addEventListener('sourceopen', () => {
         try {
@@ -155,7 +158,7 @@
           if (pendingChunks.length > 0 && !sourceBuffer.updating) {
             try { sourceBuffer.appendBuffer(pendingChunks.shift()); } catch (_) {}
           }
-          overlay.classList.add('hidden');
+          if (!playbackBlocked) overlay.classList.add('hidden');
         });
 
         // Drain anything that arrived before sourceopen
@@ -195,6 +198,7 @@
 
     function teardownH264() {
       mode = null;
+      playbackBlocked = false;
       pendingChunks = [];
       sourceBuffer = null;
       if (mediaSource && mediaSource.readyState === 'open') {
@@ -207,6 +211,24 @@
         URL.revokeObjectURL(old);
       }
     }
+
+    function requestPlayback() {
+      if (!frameH264.src) return;
+      frameH264.play()
+        .then(() => {
+          playbackBlocked = false;
+          overlay.classList.add('hidden');
+        })
+        .catch(() => {
+          playbackBlocked = true;
+          overlay.textContent = 'Click to enable audio';
+          overlay.classList.remove('hidden');
+        });
+    }
+
+    overlay.addEventListener('click', () => {
+      if (mode === 'h264') requestPlayback();
+    });
 
     connect();
 

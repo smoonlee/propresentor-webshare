@@ -5,7 +5,7 @@ const dgram = require('dgram');
 const https = require('https');
 const { createServer } = require('./server');
 const settings = require('./settings');
-const { detectCodec, spawnEncoder, MSE_CODEC_STRING } = require('./encoder');
+const { detectCodec, spawnEncoder, getMseCodecString } = require('./encoder');
 
 // Fake fullscreen JS — injected into guest pages via executeJavaScript (bypasses CSP).
 // Replaces the Fullscreen API with a CSS-based visual fake so video fills the
@@ -28,6 +28,7 @@ let currentJpegQuality = null;
 let lastFrameBuffer = null;
 let ffmpegProc = null;
 let encoderInfo = null;
+let h264AudioEnabled = process.platform === 'win32';
 
 // Diagnostics counters
 let diagFrameCount = 0;
@@ -130,6 +131,10 @@ function stopCapture() {
   }
 }
 
+function activeH264CodecString() {
+  return getMseCodecString(h264AudioEnabled);
+}
+
 function startCaptureLoop(wcId) {
   stopCapture();
   captureWebContentsId = wcId;
@@ -184,7 +189,7 @@ function startH264CaptureLoop(wcId) {
     ffmpegHeight = h;
     if (server) server.clearH264Init();
 
-    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps);
+    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps, { includeAudio: h264AudioEnabled });
 
     // Drain stderr so the OS pipe buffer never fills and blocks ffmpeg
     ffmpegProc.stderr.on('data', (d) => console.error('[Encoder]', d.toString().trimEnd()));
@@ -218,6 +223,15 @@ function startH264CaptureLoop(wcId) {
 
     ffmpegProc.on('close', (code) => {
       if (code !== 0 && code !== null) {
+        if (h264AudioEnabled) {
+          console.warn('[Encoder] Audio passthrough failed, retrying without audio');
+          h264AudioEnabled = false;
+          if (captureWebContentsId != null && server) {
+            server.setMode('h264', activeH264CodecString());
+            startH264CaptureLoop(captureWebContentsId);
+          }
+          return;
+        }
         console.error('[Encoder] ffmpeg exited with code', code, '\u2014 falling back to JPEG');
         // Fall back to JPEG so the stream remains usable
         if (captureWebContentsId != null && server) {
@@ -258,7 +272,7 @@ ipcMain.on('start-capture', (_event, webContentsId) => {
   if (webContentsId !== guestWebContentsId) return;
   const mode = settings.get('streamMode') || 'h264';
   if (mode === 'h264' && encoderInfo) {
-    server.setMode('h264', MSE_CODEC_STRING);
+    server.setMode('h264', activeH264CodecString());
     startH264CaptureLoop(webContentsId);
   } else {
     server.setMode('jpeg', '');
@@ -392,7 +406,7 @@ ipcMain.on('apply-settings', (_event, s) => {
   if (captureWebContentsId != null) {
     const mode = s.streamMode || 'h264';
     if (mode === 'h264' && encoderInfo) {
-      server.setMode('h264', MSE_CODEC_STRING);
+      server.setMode('h264', activeH264CodecString());
       startH264CaptureLoop(captureWebContentsId);
     } else {
       server.setMode('jpeg', '');
@@ -483,7 +497,7 @@ app.whenReady().then(() => {
       console.log('[Encoder] Using:', info.label);
       // If a capture is already running in JPEG fallback, upgrade it to H.264
       if (captureWebContentsId != null) {
-        server.setMode('h264', MSE_CODEC_STRING);
+        server.setMode('h264', activeH264CodecString());
         startH264CaptureLoop(captureWebContentsId);
       }
       if (mainWindow && !mainWindow.isDestroyed()) {
