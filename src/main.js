@@ -5,7 +5,7 @@ const dgram = require('dgram');
 const https = require('https');
 const { createServer } = require('./server');
 const settings = require('./settings');
-const { detectCodec, spawnEncoder, getMseCodecString } = require('./encoder');
+const { detectCodec, spawnEncoder, getMseCodecString, buildAudioCapturePlan } = require('./encoder');
 
 // Fake fullscreen JS — injected into guest pages via executeJavaScript (bypasses CSP).
 // Replaces the Fullscreen API with a CSS-based visual fake so video fills the
@@ -25,10 +25,13 @@ let captureWebContentsId = null;
 let guestWebContentsId = null;
 let currentCaptureFps = null;
 let currentJpegQuality = null;
+let currentAudioPassthrough = null;
+let currentAudioSource = null;
 let lastFrameBuffer = null;
 let ffmpegProc = null;
 let encoderInfo = null;
-let h264AudioEnabled = process.platform === 'win32';
+let activeAudioPlan = null;
+let audioFallbackDisabled = false;
 
 // Diagnostics counters
 let diagFrameCount = 0;
@@ -123,6 +126,7 @@ function stopCapture() {
   if (captureInterval) { clearInterval(captureInterval); captureInterval = null; }
   captureWebContentsId = null;
   lastFrameBuffer = null;
+  activeAudioPlan = null;
   if (server) { server.clearLastFrame(); server.clearH264Init(); }
   if (ffmpegProc) {
     try { ffmpegProc.stdin.end(); } catch (_) {}
@@ -132,7 +136,16 @@ function stopCapture() {
 }
 
 function activeH264CodecString() {
-  return getMseCodecString(h264AudioEnabled);
+  return getMseCodecString(!!activeAudioPlan && activeAudioPlan.enabled);
+}
+
+function resolveActiveAudioPlan() {
+  if (audioFallbackDisabled) {
+    return buildAudioCapturePlan({ enabled: false, source: '' });
+  }
+  const enabled = currentAudioPassthrough != null ? currentAudioPassthrough : settings.get('audioPassthrough');
+  const source = currentAudioSource != null ? currentAudioSource : settings.get('audioSource');
+  return buildAudioCapturePlan({ enabled, source });
 }
 
 function startCaptureLoop(wcId) {
@@ -167,8 +180,11 @@ function startCaptureLoop(wcId) {
   }, 1000 / fps);
 }
 
-function startH264CaptureLoop(wcId) {
+function startH264CaptureLoop(wcId, options = {}) {
   stopCapture();
+  if (!options.preserveAudioFallback) {
+    audioFallbackDisabled = false;
+  }
   captureWebContentsId = wcId;
   const fps = currentCaptureFps || settings.get('captureFps');
   let capturing = false;
@@ -187,9 +203,18 @@ function startH264CaptureLoop(wcId) {
     initExtracted = false;
     ffmpegWidth = w;
     ffmpegHeight = h;
+    activeAudioPlan = resolveActiveAudioPlan();
+    if (activeAudioPlan.warning) {
+      console.warn('[Audio]', activeAudioPlan.warning);
+    } else if (activeAudioPlan.enabled) {
+      console.log('[Audio] Using:', activeAudioPlan.label);
+    }
     if (server) server.clearH264Init();
 
-    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps, { includeAudio: h264AudioEnabled });
+    ffmpegProc = spawnEncoder(encoderInfo.codec, w, h, fps, {
+      includeAudio: activeAudioPlan.enabled,
+      audioSource: activeAudioPlan.source || '',
+    });
 
     // Drain stderr so the OS pipe buffer never fills and blocks ffmpeg
     ffmpegProc.stderr.on('data', (d) => console.error('[Encoder]', d.toString().trimEnd()));
@@ -223,12 +248,13 @@ function startH264CaptureLoop(wcId) {
 
     ffmpegProc.on('close', (code) => {
       if (code !== 0 && code !== null) {
-        if (h264AudioEnabled) {
+        if (activeAudioPlan && activeAudioPlan.enabled) {
           console.warn('[Encoder] Audio passthrough failed, retrying without audio');
-          h264AudioEnabled = false;
+          audioFallbackDisabled = true;
+          activeAudioPlan = buildAudioCapturePlan({ enabled: false, source: '' });
           if (captureWebContentsId != null && server) {
             server.setMode('h264', activeH264CodecString());
-            startH264CaptureLoop(captureWebContentsId);
+            startH264CaptureLoop(captureWebContentsId, { preserveAudioFallback: true });
           }
           return;
         }
@@ -272,6 +298,7 @@ ipcMain.on('start-capture', (_event, webContentsId) => {
   if (webContentsId !== guestWebContentsId) return;
   const mode = settings.get('streamMode') || 'h264';
   if (mode === 'h264' && encoderInfo) {
+    activeAudioPlan = resolveActiveAudioPlan();
     server.setMode('h264', activeH264CodecString());
     startH264CaptureLoop(webContentsId);
   } else {
@@ -373,6 +400,8 @@ function sanitizeSettings(s) {
     bindAddress: /^(\d{1,3}\.){3}\d{1,3}$|^localhost$/.test(s.bindAddress) && s.bindAddress.split('.').every(o => +o <= 255) ? s.bindAddress : '0.0.0.0',
     captureFps: Math.max(1, Math.min(60, parseInt(s.captureFps, 10) || 30)),
     jpegQuality: Math.max(10, Math.min(100, parseInt(s.jpegQuality, 10) || 70)),
+    audioPassthrough: !!s.audioPassthrough,
+    audioSource: typeof s.audioSource === 'string' ? s.audioSource.trim() : '',
     startupUrl: typeof s.startupUrl === 'string' && /^https?:\/\//i.test(s.startupUrl) ? s.startupUrl : '',
     alwaysOnTop: !!s.alwaysOnTop,
     showDiagnostics: !!s.showDiagnostics,
@@ -405,7 +434,10 @@ ipcMain.on('apply-settings', (_event, s) => {
   // Restart capture in the correct mode if active
   if (captureWebContentsId != null) {
     const mode = s.streamMode || 'h264';
+    currentAudioPassthrough = !!s.audioPassthrough;
+    currentAudioSource = typeof s.audioSource === 'string' ? s.audioSource : '';
     if (mode === 'h264' && encoderInfo) {
+      activeAudioPlan = resolveActiveAudioPlan();
       server.setMode('h264', activeH264CodecString());
       startH264CaptureLoop(captureWebContentsId);
     } else {
@@ -482,6 +514,8 @@ function setupMenu() {
 // ── App lifecycle ──
 app.whenReady().then(() => {
   const cfg = settings.load();
+  currentAudioPassthrough = !!cfg.audioPassthrough;
+  currentAudioSource = typeof cfg.audioSource === 'string' ? cfg.audioSource : '';
   if (app.isPackaged) {
     app.setLoginItemSettings({ openAtLogin: cfg.launchOnStartup });
   }
@@ -497,6 +531,7 @@ app.whenReady().then(() => {
       console.log('[Encoder] Using:', info.label);
       // If a capture is already running in JPEG fallback, upgrade it to H.264
       if (captureWebContentsId != null) {
+        activeAudioPlan = resolveActiveAudioPlan();
         server.setMode('h264', activeH264CodecString());
         startH264CaptureLoop(captureWebContentsId);
       }

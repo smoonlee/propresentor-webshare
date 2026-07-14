@@ -21,6 +21,7 @@ An Electron desktop app that loads any web page, captures it, and streams it liv
 
 - **H.264 hardware-accelerated streaming** — NVENC (NVIDIA), QSV (Intel), AMF (AMD), with automatic fallback to libx264 (CPU); played back via MediaSource Extensions in the viewer
 - **Dual stream modes** — H.264 (low-latency, hardware-accelerated) or JPEG (maximum compatibility), switchable live from Settings
+- **Cross-platform audio passthrough** — Windows uses WASAPI loopback, Linux prefers the default PulseAudio/PipeWire monitor, and macOS can use a user-selected loopback device such as BlackHole
 - **Encoder auto-detection** — available H.264 encoders are probed at startup; active encoder shown in Settings
 - Configurable capture FPS (1–60) and JPEG quality (10–100)
 - Frame deduplication — identical frames are skipped to save bandwidth
@@ -112,6 +113,8 @@ build/
 | Allow camera/mic | on | Permit camera and microphone access requests from the loaded page |
 | Allow location | on | Permit geolocation access requests from the loaded page |
 | Allow notifications | on | Permit notification permission requests from the loaded page |
+| Audio passthrough | on | Try to mux page/system audio into the H.264 stream when the platform supports it |
+| Audio source | _(empty)_ | Optional ffmpeg input selector for Linux/macOS loopback devices |
 
 ## Keyboard Shortcuts
 

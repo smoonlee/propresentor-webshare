@@ -6,6 +6,10 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-platform audio passthrough** — the H.264 path now routes audio through the best available ffmpeg backend for each OS: WASAPI loopback on Windows, PulseAudio/PipeWire monitor capture on Linux, and a user-supplied loopback device on macOS.
+
 ## [1.5.3] - 2026-07-12
 
 ### Fixed

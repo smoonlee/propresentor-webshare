@@ -2,6 +2,7 @@
 
 const { execFile, spawn } = require('child_process');
 const { app } = require('electron');
+const { buildAudioCapturePlan } = require('./audio-capture');
 
 // MSE codec string — H.264 High Profile Level 4.0
 // Matches the explicit -profile:v high -level 4.0 applied to every encoder below.
@@ -99,19 +100,14 @@ function getMseCodecString(includeAudio = false) {
 function spawnEncoder(codec, width, height, fps, options = {}) {
   const ffmpegPath = getFfmpegPath();
   const kf = keyframeInterval(fps);
-  const includeAudio = !!options.includeAudio && process.platform === 'win32';
+  const audioPlan = buildAudioCapturePlan({
+    enabled: !!options.includeAudio,
+    source: options.audioSource || '',
+  });
 
   // -keyint_min and -sc_threshold are libx264-specific; omit for HW encoders
   const x264Only = codec === 'libx264'
     ? ['-keyint_min', String(kf), '-sc_threshold', '0']
-    : [];
-
-  const audioInput = includeAudio
-    ? ['-thread_queue_size', '1024', '-f', 'wasapi', '-loopback', '1', '-i', 'default']
-    : [];
-
-  const audioOutput = includeAudio
-    ? ['-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2']
     : [];
 
   const args = [
@@ -120,8 +116,7 @@ function spawnEncoder(codec, width, height, fps, options = {}) {
     '-s', `${width}x${height}`,
     '-r', String(fps),
     '-i', 'pipe:0',
-    ...audioInput,
-    ...audioOutput,
+    ...(audioPlan.enabled ? [...audioPlan.inputArgs, ...audioPlan.outputArgs] : []),
     ...buildCodecArgs(codec),
     '-g', String(kf),
     ...x264Only,
@@ -133,4 +128,4 @@ function spawnEncoder(codec, width, height, fps, options = {}) {
   return spawn(ffmpegPath, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
-module.exports = { detectCodec, spawnEncoder, MSE_CODEC_STRING, MSE_AUDIO_CODEC_STRING, getMseCodecString };
+module.exports = { detectCodec, spawnEncoder, MSE_CODEC_STRING, MSE_AUDIO_CODEC_STRING, getMseCodecString, buildAudioCapturePlan };

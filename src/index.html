@@ -445,6 +445,25 @@
       </div>
 
       <div class="s-section">
+        <h3>Audio</h3>
+        <div class="s-field">
+          <label>Passthrough</label>
+          <label class="s-toggle">
+            <input type="checkbox" id="s-audio" />
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="s-field">
+          <label for="s-audio-source">Audio source</label>
+          <input type="text" id="s-audio-source" placeholder="default / BlackHole / monitor name" />
+        </div>
+        <div class="s-field">
+          <label></label>
+          <span id="s-audio-hint" style="font-size:12px;color:#aaa;flex:1">Windows uses WASAPI loopback. Linux prefers the default sink monitor. macOS needs a loopback device such as BlackHole.</span>
+        </div>
+      </div>
+
+      <div class="s-section">
         <h3>Startup</h3>
         <div class="s-field">
           <label for="s-startup-url">Auto-load URL</label>
@@ -598,6 +617,8 @@
       allowGeo:      document.getElementById('s-allow-geo'),
       allowNotif:    document.getElementById('s-allow-notif'),
       streamMode:    document.getElementById('s-stream-mode'),
+      audio:         document.getElementById('s-audio'),
+      audioSource:   document.getElementById('s-audio-source'),
     };
 
     function populateSettings(s) {
@@ -613,6 +634,8 @@
       sFields.allowGeo.checked        = !!s.allowGeolocation;
       sFields.allowNotif.checked      = !!s.allowNotifications;
       sFields.streamMode.value        = s.streamMode || 'h264';
+      sFields.audio.checked           = !!s.audioPassthrough;
+      sFields.audioSource.value       = s.audioSource || '';
     }
 
     function collectSettings() {
@@ -625,6 +648,8 @@
         alwaysOnTop:        sFields.aot.checked,
         launchOnStartup:    sFields.launchStartup.checked,
         showDiagnostics:    sFields.diag.checked,
+        audioPassthrough:   sFields.audio.checked,
+        audioSource:        sFields.audioSource.value.trim(),
         allowMedia:         sFields.allowMedia.checked,
         allowGeolocation:   sFields.allowGeo.checked,
         allowNotifications: sFields.allowNotif.checked,

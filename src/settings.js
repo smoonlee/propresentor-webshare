@@ -9,6 +9,8 @@ const DEFAULTS = {
   bindAddress: '0.0.0.0',
   captureFps: 30,
   jpegQuality: 70,
+  audioPassthrough: true,
+  audioSource: '',
   startupUrl: '',
   alwaysOnTop: false,
   showDiagnostics: false,
