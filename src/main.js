@@ -139,6 +139,22 @@ function activeH264CodecString() {
   return getMseCodecString(!!activeAudioPlan && activeAudioPlan.enabled);
 }
 
+function writeFrameToEncoder(bitmap) {
+  if (!ffmpegProc || !ffmpegProc.stdin) return false;
+  if (ffmpegProc.stdin.destroyed || ffmpegProc.stdin.writableEnded || ffmpegProc.stdin.writableFinished) {
+    return false;
+  }
+  try {
+    return ffmpegProc.stdin.write(bitmap);
+  } catch (err) {
+    const msg = err && err.message ? err.message : '';
+    if (/write eof|eof|epipe/i.test(msg)) {
+      return false;
+    }
+    throw err;
+  }
+}
+
 function resolveActiveAudioPlan() {
   if (audioFallbackDisabled) {
     return buildAudioCapturePlan({ enabled: false, source: '' });
@@ -218,6 +234,11 @@ function startH264CaptureLoop(wcId, options = {}) {
 
     // Drain stderr so the OS pipe buffer never fills and blocks ffmpeg
     ffmpegProc.stderr.on('data', (d) => console.error('[Encoder]', d.toString().trimEnd()));
+    ffmpegProc.stdin.on('error', (err) => {
+      const msg = err && err.message ? err.message : '';
+      if (/write eof|eof|epipe/i.test(msg)) return;
+      console.error('[Encoder] ffmpeg stdin error:', msg);
+    });
 
     ffmpegProc.stdout.on('data', (chunk) => {
       if (!initExtracted) {
@@ -285,9 +306,7 @@ function startH264CaptureLoop(wcId, options = {}) {
         if (!ffmpegProc) return;
         diagFrameCount++;
         const bitmap = image.toBitmap();
-        if (!ffmpegProc.stdin.destroyed) {
-          try { ffmpegProc.stdin.write(bitmap); } catch (_) {}
-        }
+        writeFrameToEncoder(bitmap);
       }).catch(() => { capturing = false; });
     } catch (_) { stopCapture(); capturing = false; }
   }, 1000 / fps);
