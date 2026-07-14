@@ -51,10 +51,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "ProPresenter WebShare",
-      "publisherName": "smoonlee",
-      "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}"
-    }
+      "shortcutName": "ProPresenter WebShare"
+    },
+    "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}",
+    "publisherName": "smoonlee"
   },
   "engines": {
     "node": ">=26"
