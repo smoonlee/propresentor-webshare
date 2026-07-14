@@ -53,8 +53,7 @@
       "createStartMenuShortcut": true,
       "shortcutName": "ProPresenter WebShare"
     },
-    "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}",
-    "publisherName": "smoonlee"
+    "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}"
   },
   "engines": {
     "node": ">=26"
