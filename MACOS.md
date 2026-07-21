@@ -2,7 +2,8 @@
 
 macOS builds support the same webview capture, JPEG stream, and H.264 stream as
 Windows. On Apple hardware the app probes FFmpeg's `h264_videotoolbox` encoder
-before falling back to `libx264`.
+before falling back to `libx264`. These builds are preview support until tested
+on physical Intel and Apple Silicon Macs; see [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md).
 
 System-audio loopback is intentionally unavailable on macOS. The existing audio
 implementation uses Windows WASAPI; macOS needs a separately designed capture
@@ -33,7 +34,9 @@ ProPresenter_WebShare_<version>_mac_arm64.zip
 A DMG can only be created on macOS because it uses Apple's disk-image tooling.
 The pull-request workflow builds both architectures on GitHub-hosted macOS
 runners and keeps the unsigned artifacts for seven days, which is useful when a
-local Mac is unavailable.
+local Mac is unavailable. A manually pushed `v*` tag publishes both macOS
+architectures with the Windows installer. The separate Dependabot release
+automation currently publishes Windows only.
 
 ## Signing before public distribution
 
