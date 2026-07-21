@@ -6,6 +6,35 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-21
+
+### Added
+
+- **macOS release builds** — added unsigned DMG and ZIP packaging for both Intel
+  (`x64`) and Apple Silicon (`arm64`) Macs, with matching GitHub Actions build
+  lanes and artifacts.
+- **Apple VideoToolbox H.264** — macOS now probes `h264_videotoolbox` before
+  falling back to `libx264`, matching the hardware-encoder selection already
+  available on Windows.
+- **macOS web-page audio** — Settings can relay audio produced by the loaded
+  webview to viewers. Windows continues to relay all system audio via WASAPI.
+- **Platform documentation** — added a platform support matrix and macOS build,
+  validation, signing, and release guidance.
+
+### Changed
+
+- **Audio settings** — the Windows “Audio loopback” control becomes “Web page
+  audio” on macOS to accurately describe its source.
+- **Tag releases** — manually pushed `v*` tags now publish Windows plus Intel
+  and Apple Silicon macOS artifacts.
+
+### Notes
+
+- macOS web-page audio does not include other applications or the system-wide
+  mixer; Electron's system `loopback` source is Windows-only.
+- macOS artifacts are unsigned and await physical-device validation, so this is
+  preview support until signing/notarization and Mac testing are complete.
+
 ## [1.6.2] - 2026-07-21
 
 ### Fixed

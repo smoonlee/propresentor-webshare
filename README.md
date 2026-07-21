@@ -41,8 +41,8 @@ An Electron desktop app that loads any web page, captures it, and streams it liv
 ## Platform support
 
 Windows x64 is the established target. macOS Intel and Apple Silicon builds are
-produced in CI but need first-device validation and are unsigned; Windows-only
-system-audio loopback is deliberately unavailable on macOS. See
+produced in CI but need first-device validation and are unsigned. Windows can
+stream all system audio; macOS streams audio from the loaded web page only. See
 [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md) for the complete support matrix and
 release behaviour.
 

@@ -9,16 +9,16 @@ to ProPresenter or any modern browser on the LAN.
 |---|---|---|---|
 | App, webview capture, JPEG stream | Supported | CI-built; device validation pending | CI-built; device validation pending |
 | H.264 stream | NVENC, QSV, AMF, then `libx264` fallback | `h264_videotoolbox`, then `libx264` fallback | `h264_videotoolbox`, then `libx264` fallback |
-| System-audio loopback | Supported through Windows WASAPI | Not supported | Not supported |
+| Audio relay | All system audio through Windows WASAPI | Loaded web page audio only (preview) | Loaded web page audio only (preview) |
 | Login item / launch on startup | Supported in packaged app | Implemented; device validation pending | Implemented; device validation pending |
 | Installer format | NSIS installer and portable `.exe` | Unsigned DMG and ZIP | Unsigned DMG and ZIP |
 | Code signing and notarization | Not configured | Not configured | Not configured |
 
 ## Important limitations
 
-- The app deliberately disables its Audio loopback control outside Windows. A
-  macOS implementation needs a dedicated system-audio capture and permission
-  design; it is not a packaging-only change.
+- Windows captures the system mixer through WASAPI. macOS captures audio from
+  the loaded webview directly, so it streams the page's audio but not other Mac
+  applications or the system-wide mixer.
 - `app.disableHardwareAcceleration()` applies to Electron's rendering process
   on both platforms. H.264 hardware encoding still runs in the separate FFmpeg
   process, subject to a successful encoder probe.
