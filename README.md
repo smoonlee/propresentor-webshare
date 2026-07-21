@@ -32,16 +32,16 @@ An Electron desktop app that loads any web page, captures it, and streams it liv
 - Draggable diagnostics overlay (FPS, bandwidth, frame size, memory, viewer count, uptime)
 - Status bar with viewer count and clickable/copyable server URL
 - Pin (always-on-top) toggle
-- Launch on startup — registers as a Windows login item
+- Launch on startup — registers as an OS login item
 - Auto-load startup URL on launch
 - No menu bar — clean, minimal UI
 - Fake fullscreen containment — video fullscreen stays inside the webview, toolbar and status bar remain visible
-- NSIS installer for Windows (x64) with custom app icon
+- NSIS installer for Windows (x64), plus unsigned macOS DMG/ZIP release scaffolding
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) v26 or later
-- Windows 10/11 (x64) for building the installer
+- Windows 10/11 (x64) for the Windows installer, or macOS for macOS DMG/ZIP builds
 
 ## Getting Started
 
@@ -73,6 +73,8 @@ npm run build:portable   # Portable .exe  → dist/
 ### Automated dependency releases
 
 Dependabot opens npm update pull requests weekly. Every pull request to `main` runs syntax checks, smoke tests, and a Windows installer build. When an npm Dependabot pull request is merged, the release workflow repeats those checks, increments the patch version, updates [CHANGELOG.md](CHANGELOG.md), builds the installer, creates a `vX.Y.Z` tag, and publishes a GitHub Release. If either workflow fails, it creates a GitHub issue and mentions `@smoon_lee`.
+
+macOS packaging and the current limitations are described in [MACOS.md](MACOS.md). Pull requests also build unsigned Intel and Apple Silicon macOS artifacts for download from the workflow run.
 
 ## Project Structure
 
@@ -107,7 +109,7 @@ build/
 | HW encoder | auto | Preferred H.264 encoder: `auto`, `h264_nvenc`, `h264_qsv`, `h264_amf`, `libx264` |
 | Startup URL | _(empty)_ | Auto-load this URL on launch |
 | Always on top | off | Keep window above all others |
-| Launch on startup | off | Register app as a Windows login item (packaged build only) |
+| Launch on startup | off | Register app as an OS login item (packaged build only) |
 | Show diagnostics | off | Show the draggable diagnostics overlay |
 | Allow camera/mic | on | Permit camera and microphone access requests from the loaded page |
 | Allow location | on | Permit geolocation access requests from the loaded page |

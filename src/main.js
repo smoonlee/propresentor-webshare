@@ -289,6 +289,9 @@ ipcMain.handle('get-viewer-count', () => {
 // ── IPC: get server port ──
 ipcMain.handle('get-port', () => settings.get('port'));
 
+// Renderer uses this to hide Windows-only system-audio controls on macOS.
+ipcMain.handle('get-platform', () => process.platform);
+
 // ── IPC: diagnostics ──
 let cachedLanIp = null;
 function getLanIp() {
@@ -373,8 +376,10 @@ function sanitizeSettings(s) {
     allowGeolocation: !!s.allowGeolocation,
     allowNotifications: !!s.allowNotifications,
     streamMode: ['h264', 'jpeg'].includes(s.streamMode) ? s.streamMode : 'h264',
-    hwEncoder: ['auto', 'nvenc', 'qsv', 'amf', 'software'].includes(s.hwEncoder) ? s.hwEncoder : 'auto',
-    audioEnabled: !!s.audioEnabled,
+    hwEncoder: ['auto', 'nvenc', 'qsv', 'amf', 'videotoolbox', 'software'].includes(s.hwEncoder) ? s.hwEncoder : 'auto',
+    // The loopback pipeline is implemented with Windows WASAPI. Do not retain
+    // an unsupported setting when the same profile is opened on macOS.
+    audioEnabled: process.platform === 'win32' && !!s.audioEnabled,
   };
 }
 
@@ -534,23 +539,25 @@ app.whenReady().then(() => {
     app.setLoginItemSettings({ openAtLogin: cfg.launchOnStartup });
   }
 
-  // Intercept getDisplayMedia() calls from the renderer.
-  // Use system-wide WASAPI loopback to capture audio from the default output device.
-  // This captures everything playing through the speakers, including the webview's audio.
-  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
-    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-      if (!sources || sources.length === 0) {
-        console.warn('[Audio] No screen sources available');
+  // Intercept getDisplayMedia() calls for the Windows-only WASAPI loopback
+  // implementation. macOS system-audio capture has different permissions and
+  // APIs, so it is deliberately not advertised or enabled in this release.
+  if (process.platform === 'win32') {
+    session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+      desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+        if (!sources || sources.length === 0) {
+          console.warn('[Audio] No screen sources available');
+          callback({});
+          return;
+        }
+        console.log('[Audio] Using screen source:', sources[0].name, '+ WASAPI loopback');
+        callback({ video: sources[0], audio: 'loopback' });
+      }).catch((err) => {
+        console.error('[Audio] desktopCapturer.getSources failed:', err.message);
         callback({});
-        return;
-      }
-      console.log('[Audio] Using screen source:', sources[0].name, '+ WASAPI loopback');
-      callback({ video: sources[0], audio: 'loopback' });
-    }).catch((err) => {
-      console.error('[Audio] desktopCapturer.getSources failed:', err.message);
-      callback({});
-    });
-  }, { useSystemPicker: false });
+      });
+    }, { useSystemPicker: false });
+  }
   server = createServer(cfg.port, cfg.bindAddress);
   server.ready.catch((err) => {
     dialog.showErrorBox('Server failed to start', err.message);

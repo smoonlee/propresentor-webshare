@@ -17,8 +17,8 @@ const DEFAULTS = {
   allowGeolocation: true,
   allowNotifications: true,
   streamMode: 'h264',  // 'h264' | 'jpeg'
-  hwEncoder: 'auto',   // 'auto' | 'nvenc' | 'qsv' | 'amf' | 'software'
-  audioEnabled: false, // include audio loopback via Electron getDisplayMedia
+  hwEncoder: 'auto',   // 'auto' | 'nvenc' | 'qsv' | 'amf' | 'videotoolbox' | 'software'
+  audioEnabled: false, // Windows WASAPI loopback via Electron getDisplayMedia
 };
 
 let cache = null;

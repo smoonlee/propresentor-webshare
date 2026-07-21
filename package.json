@@ -9,7 +9,11 @@
     "test": "node --test",
     "check": "node --check src/main.js && node --check src/preload.js && node --check src/server.js && node --check src/settings.js && node --check src/encoder.js && node --check src/webview-preload.js && node --check src/fake-fullscreen-code.js && node --check scripts/update-changelog.js && npm test",
     "build": "electron-builder --win",
-    "build:portable": "electron-builder --win portable"
+    "build:portable": "electron-builder --win portable",
+    "build:mac": "electron-builder --mac",
+    "build:mac:zip": "electron-builder --mac zip",
+    "build:mac:x64": "electron-builder --mac --x64",
+    "build:mac:arm64": "electron-builder --mac --arm64"
   },
   "keywords": [
     "propresenter",
@@ -22,7 +26,7 @@
   "build": {
     "appId": "com.propresenter.webshare",
     "productName": "ProPresenter WebShare",
-    "icon": "assets/webshare-icon.ico",
+    "icon": "assets/webshare-icon-square.png",
     "afterPack": "build/afterPack.js",
     "directories": {
       "output": "dist"
@@ -35,6 +39,26 @@
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**"
     ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ProPresenter WebShare"
+    },
+    "artifactName": "ProPresenter_WebShare_${version}_mac_${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "assets/webshare-icon-square.png",
+      "identity": null,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "artifactName": "ProPresenter_WebShare_${version}_mac_${arch}.${ext}"
+    },
     "win": {
       "icon": "assets/webshare-icon.ico",
       "target": [
@@ -44,16 +68,9 @@
             "x64"
           ]
         }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "ProPresenter WebShare"
-    },
-    "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}"
+      ],
+      "artifactName": "ProPresenter_WebShare_Setup_${version}.${ext}"
+    }
   },
   "engines": {
     "node": ">=26"

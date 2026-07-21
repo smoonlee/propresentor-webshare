@@ -35,16 +35,24 @@ async function detectCodec(hwPreference) {
 
   // Honour an explicit encoder choice first
   if (hwPreference && hwPreference !== 'auto' && hwPreference !== 'software') {
-    const map = { nvenc: 'h264_nvenc', qsv: 'h264_qsv', amf: 'h264_amf' };
+    const map = {
+      nvenc: 'h264_nvenc',
+      qsv: 'h264_qsv',
+      amf: 'h264_amf',
+      videotoolbox: 'h264_videotoolbox',
+    };
     const forced = map[hwPreference];
     if (forced && await probeCodec(ffmpegPath, forced)) {
       return { codec: forced, hw: true, label: forced };
     }
   }
 
-  // Auto-detect: NVENC → QSV → AMF
+  // Auto-detect the platform's native hardware encoders first.
   if (hwPreference !== 'software') {
-    for (const codec of ['h264_nvenc', 'h264_qsv', 'h264_amf']) {
+    const hardwareCodecs = process.platform === 'darwin'
+      ? ['h264_videotoolbox']
+      : ['h264_nvenc', 'h264_qsv', 'h264_amf'];
+    for (const codec of hardwareCodecs) {
       if (await probeCodec(ffmpegPath, codec)) {
         return { codec, hw: true, label: codec };
       }
@@ -76,6 +84,9 @@ function buildCodecArgs(codec) {
     case 'h264_amf':
       return ['-c:v', 'h264_amf', '-quality', 'speed', '-b:v', '4M',
               ...COMMON_OUTPUT];
+    case 'h264_videotoolbox':
+      return ['-c:v', 'h264_videotoolbox', '-realtime', '1', '-b:v', '4M',
+              '-maxrate', '4M', '-bufsize', '2M', ...COMMON_OUTPUT];
     default: // libx264
       return ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23',
               ...COMMON_OUTPUT];

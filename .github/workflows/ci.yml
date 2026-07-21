@@ -50,3 +50,47 @@ jobs:
               labels: ['dependencies', 'ci'],
               body: `@smoon_lee, automated validation failed for a Dependabot dependency update.\n\nPull request: ${pr.html_url}\nFailed workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}\n\nPlease review the failing logs before merging or retrying this update.`,
             });
+
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Build on each native architecture so ffmpeg-static bundles the
+          # matching executable rather than a host-architecture binary.
+          - runner: macos-15-intel
+            arch: x64
+            build_script: build:mac:x64
+          - runner: macos-15
+            arch: arm64
+            build_script: build:mac:arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run syntax and smoke tests
+        run: npm run check
+
+      - name: Build unsigned macOS release
+        run: npm run ${{ matrix.build_script }}
+
+      - name: Upload macOS release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*_mac_${{ matrix.arch }}.zip
+          retention-days: 7
