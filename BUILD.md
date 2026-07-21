@@ -1,6 +1,8 @@
-# Build Guide — ProPresenter WebShare
+# Windows build guide — ProPresenter WebShare
 
-How to compile the Windows installer (`.exe`) from source.
+How to compile the Windows installer (`.exe`) from source. For macOS DMG and
+ZIP builds, use [MACOS.md](MACOS.md). The platform support and release matrix is
+in [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md).
 
 ## Requirements
 
@@ -44,7 +46,7 @@ The output is in the `dist/` folder:
 
 ```
 dist/
-  ProPresenter_WebShare_Setup_1.3.0.exe    ← installer (~165 MB, includes ffmpeg)
+  ProPresenter_WebShare_Setup_<version>.exe ← installer (~165 MB, includes ffmpeg)
   win-unpacked/                            ← unpacked app directory
 ```
 
@@ -62,6 +64,7 @@ Creates a standalone `.exe` that runs without installation.
 |--------|---------|--------|
 | `npm run build` | `electron-builder --win` | NSIS installer |
 | `npm run build:portable` | `electron-builder --win portable` | Portable `.exe` |
+| `npm run build:mac` | `electron-builder --mac` | Native macOS DMG and ZIP; must run on macOS |
 
 ## Build configuration
 
@@ -165,9 +168,19 @@ The installer filename and Windows file properties will reflect the new version 
 
 ## CI/CD — GitHub Actions release pipeline
 
-Dependabot opens weekly npm update pull requests. Each PR to `main` runs `npm run check` (JavaScript syntax checks plus the server/WebSocket smoke test) and a Windows installer build. If either fails, the CI workflow opens a GitHub issue mentioning `@smoon_lee`.
+Dependabot opens weekly npm update pull requests. Each PR to `main` runs `npm run
+check` (JavaScript syntax checks plus the server/WebSocket smoke test), a Windows
+installer build, and unsigned Intel/Apple Silicon macOS builds. If the Windows
+validation fails, the CI workflow opens a GitHub issue mentioning `@smoon_lee`.
 
-After a validated npm Dependabot PR is merged, `.github/workflows/release.yml` repeats the checks, increments the patch version, writes the dependency update to `CHANGELOG.md`, commits those release files to `main`, creates a matching `vX.Y.Z` tag, and publishes the Windows installer as a GitHub Release. Dependabot updates for GitHub Actions do not create application releases.
+After a validated npm Dependabot PR is merged, `.github/workflows/release.yml`
+repeats the checks, increments the patch version, writes the dependency update to
+`CHANGELOG.md`, commits those release files to `main`, creates a matching
+`vX.Y.Z` tag, and publishes the Windows installer as a GitHub Release.
+Dependabot updates for GitHub Actions do not create application releases. This
+automatic release remains Windows-only; manually push a `v*` tag to run
+`.github/workflows/tag-release.yml` and publish Windows plus both macOS
+architectures.
 
 The workflow needs GitHub Actions to have **Read and write permissions** for workflow `GITHUB_TOKEN`s (repository Settings → Actions → General). If `main` is protected, permit `github-actions[bot]` to push release-version commits, or exempt this workflow through your branch-protection/ruleset configuration.
 
@@ -180,4 +193,4 @@ The workflow needs GitHub Actions to have **Read and write permissions** for wor
 | Install deps | `npm ci` (clean install from lockfile) |
 | Validate | `npm run check` verifies syntax and the HTTP/WebSocket smoke test |
 | Build | `npm run build` → NSIS installer in `dist/` |
-| GitHub Release | Commits the patch version, tags it, and attaches the installer with generated notes |
+| GitHub Release | Commits the patch version, tags it, and attaches the Windows installer with generated notes |

@@ -19,7 +19,7 @@ An Electron desktop app that loads any web page, captures it, and streams it liv
 
 ## Features
 
-- **H.264 hardware-accelerated streaming** — NVENC (NVIDIA), QSV (Intel), AMF (AMD), with automatic fallback to libx264 (CPU); played back via MediaSource Extensions in the viewer
+- **H.264 hardware-accelerated streaming** — Windows probes NVENC (NVIDIA), QSV (Intel), and AMF (AMD); macOS probes VideoToolbox. Both fall back to libx264 (CPU); playback uses MediaSource Extensions in the viewer.
 - **Dual stream modes** — H.264 (low-latency, hardware-accelerated) or JPEG (maximum compatibility), switchable live from Settings
 - **Encoder auto-detection** — available H.264 encoders are probed at startup; active encoder shown in Settings
 - Configurable capture FPS (1–60) and JPEG quality (10–100)
@@ -36,7 +36,15 @@ An Electron desktop app that loads any web page, captures it, and streams it liv
 - Auto-load startup URL on launch
 - No menu bar — clean, minimal UI
 - Fake fullscreen containment — video fullscreen stays inside the webview, toolbar and status bar remain visible
-- NSIS installer for Windows (x64), plus unsigned macOS DMG/ZIP release scaffolding
+- NSIS installer for Windows (x64), plus unsigned macOS DMG/ZIP release builds for Intel and Apple Silicon
+
+## Platform support
+
+Windows x64 is the established target. macOS Intel and Apple Silicon builds are
+produced in CI but need first-device validation and are unsigned. Windows can
+stream all system audio; macOS streams audio from the loaded web page only. See
+[PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md) for the complete support matrix and
+release behaviour.
 
 ## Prerequisites
 
@@ -57,7 +65,7 @@ npm run dev        # with DevTools open
 2. Paste a URL into the address bar and press **Go** (or Enter).
 3. The status bar shows the shareable URL, e.g. `http://192.168.1.50:4983/webshare`.
 4. In ProPresenter, add a **Web** content source pointing to that URL.
-5. The page is now live-streamed as a JPEG feed.
+5. The page is now live-streamed using the selected H.264 or JPEG mode.
 
 ## Building
 
@@ -66,15 +74,17 @@ See [BUILD.md](BUILD.md) for full build instructions.
 Quick build:
 
 ```bash
-npm run build            # NSIS installer → dist/ProPresenter_WebShare_Setup_1.3.0.exe
+npm run build            # NSIS installer → dist/ProPresenter_WebShare_Setup_<version>.exe
 npm run build:portable   # Portable .exe  → dist/
+npm run build:mac        # Native macOS DMG and ZIP (run on macOS)
 ```
 
 ### Automated dependency releases
 
-Dependabot opens npm update pull requests weekly. Every pull request to `main` runs syntax checks, smoke tests, and a Windows installer build. When an npm Dependabot pull request is merged, the release workflow repeats those checks, increments the patch version, updates [CHANGELOG.md](CHANGELOG.md), builds the installer, creates a `vX.Y.Z` tag, and publishes a GitHub Release. If either workflow fails, it creates a GitHub issue and mentions `@smoon_lee`.
-
-macOS packaging and the current limitations are described in [MACOS.md](MACOS.md). Pull requests also build unsigned Intel and Apple Silicon macOS artifacts for download from the workflow run.
+Pull requests to `main` validate Windows plus both macOS architectures and keep
+unsigned macOS artifacts for seven days. A manually pushed release tag publishes
+all platform artifacts. Dependabot's automatic release workflow remains
+Windows-only; see [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md) for details.
 
 ## Project Structure
 
@@ -106,7 +116,7 @@ build/
 | FPS | 30 | Capture frames per second (1–60, live) |
 | JPEG quality | 70 | Compression quality (10–100, live; H.264 mode only uses this as fallback) |
 | Stream mode | H.264 | `H.264` (hardware-accelerated, low latency) or `JPEG` (maximum compatibility); live |
-| HW encoder | auto | Preferred H.264 encoder: `auto`, `h264_nvenc`, `h264_qsv`, `h264_amf`, `libx264` |
+| HW encoder | auto | Auto-selects NVENC/QSV/AMF on Windows or VideoToolbox on macOS; falls back to `libx264` |
 | Startup URL | _(empty)_ | Auto-load this URL on launch |
 | Always on top | off | Keep window above all others |
 | Launch on startup | off | Register app as an OS login item (packaged build only) |

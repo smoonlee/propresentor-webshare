@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   build-windows:
+    name: Build Windows
     runs-on: windows-latest
 
     steps:

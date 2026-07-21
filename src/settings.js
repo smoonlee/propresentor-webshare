@@ -18,7 +18,7 @@ const DEFAULTS = {
   allowNotifications: true,
   streamMode: 'h264',  // 'h264' | 'jpeg'
   hwEncoder: 'auto',   // 'auto' | 'nvenc' | 'qsv' | 'amf' | 'videotoolbox' | 'software'
-  audioEnabled: false, // Windows WASAPI loopback via Electron getDisplayMedia
+  audioEnabled: false, // Windows system mixer or macOS loaded-webview audio
 };
 
 let cache = null;

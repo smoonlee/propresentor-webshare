@@ -482,7 +482,7 @@
           <span id="s-encoder-label" style="font-size:12px;color:#aaa;flex:1">Detecting…</span>
         </div>
         <div class="s-field" id="s-audio-loopback-field">
-          <label>Audio loopback</label>
+          <label id="s-audio-label">Audio loopback</label>
           <label class="s-toggle">
             <input type="checkbox" id="s-audio-enabled" />
             <span class="slider"></span>
@@ -631,9 +631,9 @@
     let settingsOrigBind = null;
     let settingsOrigFps = null;
     let settingsOrigQuality = null;
-    // False until the main process confirms Windows support. This avoids a
-    // startup race that could otherwise invoke getDisplayMedia on macOS.
-    let supportsSystemAudioLoopback = false;
+    // False until the main process confirms an audio source for this platform.
+    let supportsAudioCapture = false;
+    let audioCaptureMode = 'none';
 
     const sFields = {
       port:          document.getElementById('s-port'),
@@ -651,19 +651,24 @@
       audioEnabled:  document.getElementById('s-audio-enabled'),
     };
 
-    function updateAudioLoopbackAvailability() {
-      const enabled = supportsSystemAudioLoopback && sFields.streamMode.value === 'h264';
+    function updateAudioCaptureAvailability(info) {
+      supportsAudioCapture = !!info.available;
+      audioCaptureMode = info.mode || 'none';
+      document.getElementById('s-audio-label').textContent = info.label || 'Audio';
+      document.getElementById('s-audio-loopback-hint').textContent = info.hint || '';
+      const enabled = supportsAudioCapture && sFields.streamMode.value === 'h264';
       sFields.audioEnabled.disabled = !enabled;
-      document.getElementById('s-audio-loopback-field').style.display = supportsSystemAudioLoopback ? '' : 'none';
-      document.getElementById('s-audio-loopback-hint').style.display = supportsSystemAudioLoopback ? '' : 'none';
-      if (!supportsSystemAudioLoopback) {
+      document.getElementById('s-audio-loopback-field').style.display = supportsAudioCapture ? '' : 'none';
+      document.getElementById('s-audio-loopback-hint').style.display = supportsAudioCapture ? '' : 'none';
+      if (!supportsAudioCapture) {
         sFields.audioEnabled.checked = false;
         stopAudioCapture();
       }
     }
 
-    // ── Audio capture via WASAPI loopback ──
-    // getDisplayMedia + setDisplayMediaRequestHandler provides system audio.
+    // ── Audio capture ──
+    // getDisplayMedia + setDisplayMediaRequestHandler provides the Windows
+    // system mixer or the macOS webview audio source.
     // Encoded as WebM/Opus via MediaRecorder and relayed to viewers over HTTP.
     let audioMediaRecorder = null;
     let audioStream = null;
@@ -671,12 +676,12 @@
     let _audioChunkCount = 0;
 
     async function startAudioCapture() {
-      if (!supportsSystemAudioLoopback || audioMediaRecorder || _audioCapturePending) return;
+      if (!supportsAudioCapture || audioMediaRecorder || _audioCapturePending) return;
       _audioCapturePending = true;
       console.log('[Audio] startAudioCapture: calling getDisplayMedia');
       try {
-        // getDisplayMedia — setDisplayMediaRequestHandler in main.js intercepts
-        // this and provides audio:'loopback' (WASAPI system audio capture).
+        // The main process selects the platform-specific source: Windows
+        // system loopback or the loaded webview's audio on macOS.
         const ms = await navigator.mediaDevices.getDisplayMedia({
           audio: true,
           video: { width: 1, height: 1, frameRate: 1 },
@@ -689,13 +694,13 @@
         });
         const audioTrack = audioTracks[0];
         if (!audioTrack) {
-          console.warn('[Audio] No audio track in MediaStream — loopback may be unsupported');
+          console.warn('[Audio] No audio track in MediaStream — capture source may be unavailable');
           _audioCapturePending = false;
           ms.getTracks().forEach(t => t.stop()); return;
         }
         console.log('[Audio] Track:', audioTrack.label || '(no label)', '| muted:', audioTrack.muted, '| readyState:', audioTrack.readyState);
-        // Keep the full stream (ms) alive so the video tracks preserve the WASAPI
-        // loopback session on Windows.
+        // Keep the full stream alive so its platform-specific audio capture
+        // session remains active while MediaRecorder relays the audio track.
         audioStream = ms;
         _audioChunkCount = 0;
 
@@ -754,7 +759,7 @@
 
     sFields.streamMode.addEventListener('change', () => {
       const isH264 = sFields.streamMode.value === 'h264';
-      sFields.audioEnabled.disabled = !isH264 || !supportsSystemAudioLoopback;
+      sFields.audioEnabled.disabled = !isH264 || !supportsAudioCapture;
       if (!isH264) {
         sFields.audioEnabled.checked = false;
         stopAudioCapture();
@@ -775,8 +780,8 @@
       sFields.allowNotif.checked      = !!s.allowNotifications;
       sFields.streamMode.value        = s.streamMode || 'h264';
       const isH264 = (s.streamMode || 'h264') === 'h264';
-      sFields.audioEnabled.disabled   = !isH264 || !supportsSystemAudioLoopback;
-      sFields.audioEnabled.checked    = !!s.audioEnabled && isH264 && supportsSystemAudioLoopback;
+      sFields.audioEnabled.disabled   = !isH264 || !supportsAudioCapture;
+      sFields.audioEnabled.checked    = !!s.audioEnabled && isH264 && supportsAudioCapture;
     }
 
     function collectSettings() {
@@ -793,7 +798,7 @@
         allowGeolocation:   sFields.allowGeo.checked,
         allowNotifications: sFields.allowNotif.checked,
         streamMode:         sFields.streamMode.value || 'h264',
-        audioEnabled:       supportsSystemAudioLoopback && sFields.audioEnabled.checked,
+        audioEnabled:       supportsAudioCapture && sFields.audioEnabled.checked,
       };
     }
 
@@ -847,7 +852,7 @@
       // Start/stop audio capture immediately so the user doesn't have to reload
       // the webview after toggling the Audio loopback setting.
       const isH264 = (s.streamMode || 'h264') === 'h264';
-      if (supportsSystemAudioLoopback && s.audioEnabled && isH264) {
+      if (supportsAudioCapture && s.audioEnabled && isH264) {
         startAudioCapture(); // no-op if already running
       } else {
         stopAudioCapture();
@@ -898,13 +903,11 @@
       btnPin.textContent = pinned ? 'Pinned' : 'Pin';
     });
 
-    // System audio is currently implemented only with Windows WASAPI loopback.
-    // Resolve the platform before any settings can enable that pipeline.
-    api.getPlatform().then((platform) => {
-      supportsSystemAudioLoopback = platform === 'win32';
-      updateAudioLoopbackAvailability();
-      if (supportsSystemAudioLoopback) {
-        preWarmAudio();
+    // Resolve the source before any saved setting can enable audio capture.
+    api.getAudioCaptureInfo().then((info) => {
+      updateAudioCaptureAvailability(info);
+      if (supportsAudioCapture) {
+        if (audioCaptureMode === 'system') preWarmAudio();
         api.getSettings().then((s) => {
           if (s.audioEnabled && (s.streamMode || 'h264') === 'h264') {
             startAudioCapture();
@@ -913,9 +916,8 @@
       }
     });
 
-    /* ── Early audio capture start (Windows only) ── */
-    // Pre-warm the Windows audio endpoint IMMEDIATELY (before settings are read)
-    // so WASAPI loopback sees an active render endpoint from the very start.
+    /* ── Early audio capture start (Windows system mixer only) ── */
+    // Pre-warm the Windows audio endpoint before starting WASAPI loopback.
     function preWarmAudio() {
       try {
         const ctx = new AudioContext();

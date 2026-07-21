@@ -289,8 +289,28 @@ ipcMain.handle('get-viewer-count', () => {
 // ── IPC: get server port ──
 ipcMain.handle('get-port', () => settings.get('port'));
 
-// Renderer uses this to hide Windows-only system-audio controls on macOS.
-ipcMain.handle('get-platform', () => process.platform);
+// Describe the audio source available on this operating system. Windows can
+// capture the system mixer via WASAPI; macOS captures audio produced by the
+// loaded webview itself (Electron does not support macOS loopback here).
+ipcMain.handle('get-audio-capture-info', () => {
+  if (process.platform === 'win32') {
+    return {
+      available: true,
+      mode: 'system',
+      label: 'Audio loopback',
+      hint: 'Captures all system audio from the Windows default playback device',
+    };
+  }
+  if (process.platform === 'darwin') {
+    return {
+      available: true,
+      mode: 'webview',
+      label: 'Web page audio',
+      hint: 'Captures audio produced by the loaded web page (not all Mac system audio)',
+    };
+  }
+  return { available: false, mode: 'none', label: 'Audio', hint: '' };
+});
 
 // ── IPC: diagnostics ──
 let cachedLanIp = null;
@@ -377,9 +397,9 @@ function sanitizeSettings(s) {
     allowNotifications: !!s.allowNotifications,
     streamMode: ['h264', 'jpeg'].includes(s.streamMode) ? s.streamMode : 'h264',
     hwEncoder: ['auto', 'nvenc', 'qsv', 'amf', 'videotoolbox', 'software'].includes(s.hwEncoder) ? s.hwEncoder : 'auto',
-    // The loopback pipeline is implemented with Windows WASAPI. Do not retain
-    // an unsupported setting when the same profile is opened on macOS.
-    audioEnabled: process.platform === 'win32' && !!s.audioEnabled,
+    // Windows captures the system mixer; macOS captures audio from the loaded
+    // webview. Other platforms do not currently provide an audio source.
+    audioEnabled: ['win32', 'darwin'].includes(process.platform) && !!s.audioEnabled,
   };
 }
 
@@ -539,9 +559,9 @@ app.whenReady().then(() => {
     app.setLoginItemSettings({ openAtLogin: cfg.launchOnStartup });
   }
 
-  // Intercept getDisplayMedia() calls for the Windows-only WASAPI loopback
-  // implementation. macOS system-audio capture has different permissions and
-  // APIs, so it is deliberately not advertised or enabled in this release.
+  // Intercept getDisplayMedia() used by the audio relay. Windows uses the
+  // system mixer; macOS captures the loaded webview's audio frame. Electron's
+  // 'loopback' source is Windows-only, so macOS must not use that path.
   if (process.platform === 'win32') {
     session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
       desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
@@ -556,6 +576,20 @@ app.whenReady().then(() => {
         console.error('[Audio] desktopCapturer.getSources failed:', err.message);
         callback({});
       });
+    }, { useSystemPicker: false });
+  } else if (process.platform === 'darwin') {
+    session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+      const guest = guestWebContentsId == null ? null : webContents.fromId(guestWebContentsId);
+      const frame = guest && !guest.isDestroyed() ? guest.mainFrame : null;
+      if (!frame) {
+        console.warn('[Audio] Loaded webview is not ready for audio capture');
+        callback({});
+        return;
+      }
+      // Capture the webview directly. enableLocalEcho keeps the page audible
+      // in the operator window while its audio is relayed to viewers.
+      console.log('[Audio] Using loaded webview audio source');
+      callback({ video: frame, audio: frame, enableLocalEcho: true });
     }, { useSystemPicker: false });
   }
   server = createServer(cfg.port, cfg.bindAddress);

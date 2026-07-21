@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Server port & LAN IP
   getPort: () => ipcRenderer.invoke('get-port'),
   getLanIp: () => ipcRenderer.invoke('get-lan-ip'),
-  getPlatform: () => ipcRenderer.invoke('get-platform'),
+  getAudioCaptureInfo: () => ipcRenderer.invoke('get-audio-capture-info'),
 
   // Get webview preload path
   getWebviewPreload: () => ipcRenderer.invoke('get-webview-preload'),
