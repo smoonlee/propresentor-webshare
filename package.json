@@ -8,12 +8,12 @@
     "dev": "electron . --dev",
     "test": "node --test",
     "check": "node --check src/main.js && node --check src/preload.js && node --check src/server.js && node --check src/settings.js && node --check src/encoder.js && node --check src/webview-preload.js && node --check src/fake-fullscreen-code.js && node --check scripts/update-changelog.js && npm test",
-    "build": "electron-builder --win",
-    "build:portable": "electron-builder --win portable",
-    "build:mac": "electron-builder --mac",
-    "build:mac:zip": "electron-builder --mac zip",
-    "build:mac:x64": "electron-builder --mac --x64",
-    "build:mac:arm64": "electron-builder --mac --arm64"
+    "build": "electron-builder --win --publish never",
+    "build:portable": "electron-builder --win portable --publish never",
+    "build:mac": "electron-builder --mac --publish never",
+    "build:mac:zip": "electron-builder --mac zip --publish never",
+    "build:mac:x64": "electron-builder --mac --x64 --publish never",
+    "build:mac:arm64": "electron-builder --mac --arm64 --publish never"
   },
   "keywords": [
     "propresenter",
