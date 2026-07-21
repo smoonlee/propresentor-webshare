@@ -515,6 +515,19 @@ function setupMenu() {
 }
 
 // ── App lifecycle ──
+// Prevent a second instance from starting and colliding on the same port.
+// If another instance is already running, focus it and quit this one.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 app.whenReady().then(() => {
   const cfg = settings.load();
   if (app.isPackaged) {

@@ -6,6 +6,12 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-07-21
+
+### Fixed
+
+- **Single-instance lock** — launching the app a second time no longer crashes with `EADDRINUSE`. The duplicate process exits immediately and the existing window is focused.
+
 ## [1.6.1] - 2026-07-21
 
 ### Security
