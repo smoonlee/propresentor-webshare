@@ -12,7 +12,8 @@ if (!version || !date || !prNumber || !prTitle || !prUrl) {
 }
 
 const changelogPath = path.join(__dirname, '..', 'CHANGELOG.md');
-const changelog = fs.readFileSync(changelogPath, 'utf8');
+// Normalise CRLF → LF so the marker check works on Windows runners.
+const changelog = fs.readFileSync(changelogPath, 'utf8').replace(/\r\n/g, '\n');
 const heading = `## [${version}]`;
 
 if (changelog.includes(heading)) {
