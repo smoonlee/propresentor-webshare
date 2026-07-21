@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   build-windows:
+    name: Build Windows
     # Skip tags pushed by the Dependabot release automation — that workflow
     # handles its own release creation via softprops/action-gh-release.
     if: github.actor != 'github-actions[bot]'
@@ -78,7 +79,7 @@ jobs:
         run: npm run ${{ matrix.build_script }}
 
       - name: Upload macOS release artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0 # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: macos-${{ matrix.arch }}
           path: |
