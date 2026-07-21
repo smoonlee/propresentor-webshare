@@ -6,6 +6,21 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-07-21
+
+### Security
+
+- **brace-expansion** — patched DoS via exponential-time expansion of consecutive non-expanding `{}` groups (GHSA-3jxr-9vmj-r5cp)
+- **js-yaml** — patched quadratic CPU consumption via YAML merge-key chains (GHSA-52cp-r559-cp3m)
+- **node-tar** — patched process crash (PAX numeric path confusion), decompression DoS, infinite-loop on negative entry size, and uncaught exception via NUL byte in PAX records (GHSA-w8wr-v893-vjvp, GHSA-23hp-3jrh-7fpw, GHSA-8x88-c5mf-7j5w, GHSA-gvwx-54wh-qm9j)
+- **body-parser** — patched DoS when an invalid `limit` value silently disables body size enforcement (GHSA-v422-hmwv-36x6)
+
+### CI / Tooling
+
+- Pinned all GitHub Actions `uses:` references to commit SHAs instead of mutable version tags
+- Fixed `update-changelog.js` CRLF line-ending bug that caused the release workflow to fail on Windows runners
+- Removed invalid `files:` key from `dependabot.yml`
+
 ## [1.6.0] - 2026-07-14
 
 ### Added
