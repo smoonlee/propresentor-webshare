@@ -6,6 +6,15 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-07-21
+
+### Fixed
+
+- **macOS release workflow** — prevent electron-builder from attempting
+  implicit GitHub publishing after creating macOS artifacts. The workflow now
+  leaves publishing to its final GitHub Release step, allowing Intel and Apple
+  Silicon DMG/ZIP files to be attached successfully.
+
 ## [1.7.0] - 2026-07-21
 
 ### Added
