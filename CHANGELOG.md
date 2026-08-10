@@ -6,6 +6,12 @@ The release workflow adds an entry whenever it publishes a validated npm Dependa
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-08-10
+
+### Dependencies
+
+- chore(deps): bump ws from 8.21.1 to 8.21.2 ([#69](https://github.com/smoonlee/propresentor-webshare/pull/69))
+
 ## [1.7.1] - 2026-07-21
 
 ### Fixed
