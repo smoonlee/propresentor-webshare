@@ -79,7 +79,7 @@
     "express": "5.2.1",
     "ffmpeg-static": "^5.3.0",
     "qrcode": "^1.5.4",
-    "ws": "8.21.2"
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "electron": "43.1.1",
