@@ -83,7 +83,7 @@
   },
   "devDependencies": {
     "electron": "43.1.1",
-    "electron-builder": "26.15.3",
+    "electron-builder": "26.18.0",
     "png-to-ico": "3.0.2",
     "sharp": "0.35.3"
   }
